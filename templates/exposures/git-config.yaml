@@ -1,0 +1,17 @@
+id: git-config-exposure
+info:
+  name: Git Config Exposure
+  severity: high
+  description: Detects exposed .git/config files that leak repository metadata
+  tags: exposure,git,config
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/config"
+    matchers:
+      - type: word
+        words:
+          - "[core]"
+          - "repositoryformatversion"
+        condition: and

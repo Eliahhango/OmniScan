@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OmniScan Web UI Fallback</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #c9d1d9; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; padding: 20px; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 12px; margin-bottom: 24px; font-size: 24px; }
+  h1 small { font-size: 14px; color: #8b949e; font-weight: normal; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+  .card h2 { color: #58a6ff; font-size: 16px; margin-bottom: 12px; }
+  label { display: block; color: #8b949e; font-size: 13px; margin-bottom: 6px; }
+  input[type="text"] { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; }
+  input[type="text"]:focus { border-color: #58a6ff; outline: none; }
+  button { background: #238636; color: #fff; border: none; border-radius: 6px; padding: 8px 20px; font-size: 14px; cursor: pointer; margin-top: 10px; }
+  button:hover { background: #2ea043; }
+  .severity-counts { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+  .severity-badge { padding: 6px 14px; border-radius: 12px; font-size: 13px; font-weight: bold; }
+  .critical { background: #f851491a; color: #f85149; border: 1px solid #f85149; }
+  .high { background: #d299221a; color: #d29922; border: 1px solid #d29922; }
+  .medium { background: #58a6ff1a; color: #58a6ff; border: 1px solid #58a6ff; }
+  .low { background: #3fb9501a; color: #3fb950; border: 1px solid #3fb950; }
+  .info { background: #8b949e1a; color: #8b949e; border: 1px solid #8b949e; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; border-bottom: 2px solid #30363d; color: #58a6ff; font-weight: 600; }
+  td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+  tr:hover { background: #1c2128; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: bold; }
+  .status.running { background: #58a6ff1a; color: #58a6ff; }
+  .status.done { background: #3fb9501a; color: #3fb950; }
+  .status.error { background: #f851491a; color: #f85149; }
+  .footer { text-align: center; color: #484f58; font-size: 12px; padding: 20px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>OmniScan <small>Web UI Fallback</small></h1>
+
+  <div class="card">
+    <h2>Scan Target</h2>
+    <form id="scanForm">
+      <label for="target">Target URL</label>
+      <input type="text" id="target" placeholder="https://example.com" value="https://example.com">
+      <button type="submit">Start Scan</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Scan Results</h2>
+    <div class="severity-counts" id="severityCounts">
+      <span class="severity-badge critical">Critical: 0</span>
+      <span class="severity-badge high">High: 0</span>
+      <span class="severity-badge medium">Medium: 0</span>
+      <span class="severity-badge low">Low: 0</span>
+      <span class="severity-badge info">Info: 0</span>
+    </div>
+    <div id="statusBar">
+      <span class="status info">Ready</span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Severity</th><th>Title</th><th>Tool</th><th>URL</th></tr>
+      </thead>
+      <tbody id="findingsBody">
+        <tr><td colspan="4" style="text-align:center;color:#484f58;">No findings yet. Start a scan to see results.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">OmniScan Web UI Fallback &mdash; Dark theme edition</div>
+</div>
+
+<script>
+  let findings = [];
+
+  function updateUI() {
+    const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    findings.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++; });
+    document.querySelectorAll('.severity-badge').forEach(el => {
+      const cls = el.className.match(/\b(critical|high|medium|low|info)\b/);
+      if (cls) el.textContent = cls[0].charAt(0).toUpperCase() + cls[0].slice(1) + ': ' + counts[cls[0]];
+    });
+
+    const tbody = document.getElementById('findingsBody');
+    if (findings.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#484f58;">No findings yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = findings.map(f => {
+      const sevClass = ['critical','high','medium','low','info'].includes(f.severity) ? f.severity : 'info';
+      return '<tr><td><span class="severity-badge ' + sevClass + '" style="font-size:11px;padding:2px 8px;">' + f.severity.toUpperCase() + '</span></td><td>' + (f.title || '') + '</td><td>' + (f.tool || '') + '</td><td style="color:#58a6ff;font-size:12px;">' + (f.url || '') + '</td></tr>';
+    }).join('');
+  }
+
+  function setStatus(text, cls) {
+    document.getElementById('statusBar').innerHTML = '<span class="status ' + cls + '">' + text + '</span>';
+  }
+
+  document.getElementById('scanForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const target = document.getElementById('target').value.trim();
+    if (!target) return;
+
+    findings = [];
+    updateUI();
+    setStatus('Scanning ' + target + '...', 'running');
+
+    const demoFindings = [
+      { severity: 'critical', title: 'SQL Injection in login parameter', tool: 'Nuclei', url: target + '/login' },
+      { severity: 'high', title: 'XSS in search endpoint', tool: 'ZAP', url: target + '/search?q=' },
+      { severity: 'medium', title: 'Missing CSP Header', tool: 'Nikto', url: target },
+      { severity: 'low', title: 'Server version disclosure', tool: 'Nmap', url: target },
+      { severity: 'info', title: 'Live host discovered', tool: 'httpx', url: target },
+    ];
+
+    let idx = 0;
+    const interval = setInterval(function() {
+      if (idx < demoFindings.length) {
+        findings.push(demoFindings[idx]);
+        updateUI();
+        idx++;
+      } else {
+        clearInterval(interval);
+        setStatus('Scan completed', 'done');
+      }
+    }, 800);
+  });
+</script>
+</body>
+</html>

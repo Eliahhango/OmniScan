@@ -1,0 +1,21 @@
+id: tech-detect
+info:
+  name: Technology Detection
+  severity: info
+  description: Identifies web technologies used by the target application
+  tags: tech-detect,recon
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    matchers:
+      - type: word
+        words:
+          - "nginx"
+          - "apache"
+          - "cloudflare"
+          - "wordpress"
+          - "drupal"
+          - "jekyll"
+        part: header

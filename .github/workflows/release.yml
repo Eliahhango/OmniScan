@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-manual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build for all platforms
+        run: |
+          mkdir -p dist
+          platforms=("linux/amd64" "darwin/amd64" "darwin/arm64" "windows/amd64")
+          outputs=("omniscan-linux" "omniscan-darwin" "omniscan-darwin-arm64" "omniscan-windows.exe")
+          for i in "${!platforms[@]}"; do
+            IFS='/' read -r GOOS GOARCH <<< "${platforms[$i]}"
+            GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 \
+              go build -ldflags="-s -w" -o "dist/${outputs[$i]}" ./cmd/omniscan
+          done
+          cd dist
+          sha256sum * > checksums.txt
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

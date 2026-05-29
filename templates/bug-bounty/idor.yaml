@@ -1,0 +1,20 @@
+id: idor-detection
+info:
+  name: Insecure Direct Object Reference (IDOR)
+  severity: high
+  description: Detects potential IDOR patterns by accessing user-specific resources
+  tags: idor,bug-bounty,access-control
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/v1/user/1"
+      - "{{BaseURL}}/api/v1/user/2"
+      - "{{BaseURL}}/api/v1/user/3"
+    matchers:
+      - type: word
+        words:
+          - "unauthorized"
+          - "forbidden"
+        condition: or
+        negative: true

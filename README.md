@@ -37,7 +37,7 @@ docker run -it omniscan:latest tui
 
 ### One-liner (Linux/macOS)
 ```bash
-curl -sfL https://raw.githubusercontent.com/yourname/omniscan/main/install.sh | sh
+curl -sfL https://raw.githubusercontent.com/Eliahhango/OmniScan/main/install.sh | sh
 ```
 
 ## Quick Start

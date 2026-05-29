@@ -32,6 +32,7 @@ func (n *NmapScanner) Run(ctx context.Context) error {
 	nmapPath := findTool("nmap", filepath.Join(n.ToolsDir, "nmap"))
 	args := []string{
 		"-sV", "-sC",
+		"--script", "vuln",
 		"-oX", outputFile,
 		n.Target,
 	}

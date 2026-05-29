@@ -1,0 +1,33 @@
+name: Bug Report
+description: File a bug report
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: OmniScan Version
+      description: Output of `omniscan version` or commit hash
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Output
+      description: Relevant output or error messages
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Go version, tools installed
+      placeholder: |
+        OS: Ubuntu 24.04 / macOS 15 / Windows 11
+        Go: 1.26.3
+        Tools: nuclei, subfinder, httpx...

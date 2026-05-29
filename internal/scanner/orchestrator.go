@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Eliahhango/OmniScan/internal/db"
+	"github.com/Eliahhango/OmniScan/internal/normalizer"
 	"github.com/Eliahhango/OmniScan/internal/recon"
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
@@ -21,6 +22,8 @@ type Orchestrator struct {
 	results  chan types.Finding
 	errors   chan error
 	pipeline *types.ScanPipeline
+	targets  []string
+	OnStage  func(stage types.ScanStage, tool string, progress float64)
 }
 
 type OrchestratorConfig struct {
@@ -95,6 +98,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 
 		o.pipeline.Stage = s.stage
 		o.pipeline.Progress = float64(s.stage) / float64(len(stages)) * 100
+		o.emitProgress(s.stage, "", o.pipeline.Progress)
 
 		if err := s.fn(ctx, scanID); err != nil {
 			o.errors <- fmt.Errorf("stage %d: %w", s.stage, err)
@@ -112,12 +116,14 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 }
 
 func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
+	o.emitProgress(types.StageRecon, "Subfinder", 0.2)
 	subfinder := recon.NewSubfinder(o.cfg.Target)
 	subdomains, err := subfinder.Run(ctx)
 	if err != nil {
 		return err
 	}
 
+	o.emitProgress(types.StageRecon, "Httpx", 0.5)
 	httpx := recon.NewHttpx(subdomains)
 
 	alive, err := httpx.Run(ctx)
@@ -125,8 +131,10 @@ func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
 		return err
 	}
 
+	o.targets = alive
+
 	for _, u := range alive {
-		o.results <- types.Finding{
+		o.sendResult(types.Finding{
 			ID:          fmt.Sprintf("recon-%s", u),
 			Title:       "Live Host Discovered",
 			Description: fmt.Sprintf("Host %s is alive", u),
@@ -134,14 +142,14 @@ func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
 			AffectedURL: u,
 			ToolSource:  "httpx",
 			Timestamp:   time.Now(),
-		}
+		})
 	}
 
 	probes, err := httpx.RunWithTech(ctx)
 	if err == nil {
 		for _, p := range probes {
 			if len(p.Tech) > 0 {
-				o.results <- types.Finding{
+				o.sendResult(types.Finding{
 					ID:          fmt.Sprintf("tech-%s", p.URL),
 					Title:       "Technology Detected",
 					Description: fmt.Sprintf("Technologies on %s: %s", p.URL, strings.Join(p.Tech, ", ")),
@@ -149,7 +157,7 @@ func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
 					AffectedURL: p.URL,
 					ToolSource:  "httpx",
 					Timestamp:   time.Now(),
-				}
+				})
 			}
 		}
 	}
@@ -160,12 +168,14 @@ func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
 func (o *Orchestrator) runCrawling(ctx context.Context, scanID int64) error {
 	var urls []string
 
-	katana := recon.NewKatana([]string{o.cfg.Target})
+	o.emitProgress(types.StageCrawling, "Katana", 0.3)
+	katana := recon.NewKatana(o.activeTargets())
 	katanaURLs, err := katana.Run(ctx)
 	if err == nil {
 		urls = append(urls, katanaURLs...)
 	}
 
+	o.emitProgress(types.StageCrawling, "GAU", 0.7)
 	gau := recon.NewGAU(o.cfg.Target)
 	gauURLs, err := gau.Run(ctx)
 	if err == nil {
@@ -175,7 +185,7 @@ func (o *Orchestrator) runCrawling(ctx context.Context, scanID int64) error {
 	urls = uniqueStrings(urls)
 
 	for _, u := range urls {
-		o.results <- types.Finding{
+		o.sendResult(types.Finding{
 			ID:          fmt.Sprintf("crawl-%s", u),
 			Title:       "Discovered URL",
 			Description: fmt.Sprintf("URL discovered during crawling: %s", u),
@@ -183,57 +193,113 @@ func (o *Orchestrator) runCrawling(ctx context.Context, scanID int64) error {
 			AffectedURL: u,
 			ToolSource:  "crawler",
 			Timestamp:   time.Now(),
-		}
+		})
 	}
 	return nil
 }
 
 func (o *Orchestrator) runFuzzing(ctx context.Context, scanID int64) error {
-	ffuf := NewFFUF(o.cfg.Target, o.cfg.ToolsDir)
-	ffuf.Results = o.results
-	return ffuf.Run(ctx)
+	o.emitProgress(types.StageFuzzing, "FFUF", 0)
+	for _, target := range o.activeTargets() {
+		ffuf := NewFFUF(target, o.cfg.ToolsDir)
+		ffuf.Results = o.enrichResults()
+		if err := ffuf.Run(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (o *Orchestrator) runVulnScan(ctx context.Context, scanID int64) error {
-	nuclei := NewNuclei(o.cfg.Target, o.cfg.RateLimit, o.cfg.ToolsDir)
-	nuclei.Results = o.results
-	if err := nuclei.Run(ctx); err != nil {
-		return err
-	}
+	o.emitProgress(types.StageVulnScan, "Nuclei", 0)
+	for _, target := range o.activeTargets() {
+		nuclei := NewNuclei(target, o.cfg.RateLimit, o.cfg.ToolsDir)
+		nuclei.Results = o.enrichResults()
+		if err := nuclei.Run(ctx); err != nil {
+			return err
+		}
 
-	nikto := NewNikto(o.cfg.Target, o.cfg.ToolsDir)
-	nikto.Results = o.results
-	if err := nikto.Run(ctx); err != nil {
-		return err
-	}
+		o.emitProgress(types.StageVulnScan, "Nikto", 33)
+		nikto := NewNikto(target, o.cfg.ToolsDir)
+		nikto.Results = o.enrichResults()
+		if err := nikto.Run(ctx); err != nil {
+			return err
+		}
 
-	openvas := NewOpenVAS(o.cfg.Target, o.cfg.ToolsDir)
-	openvas.Results = o.results
-	return openvas.Run(ctx)
+		o.emitProgress(types.StageVulnScan, "OpenVAS", 66)
+		openvas := NewOpenVAS(target, o.cfg.ToolsDir)
+		openvas.Results = o.enrichResults()
+		if err := openvas.Run(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (o *Orchestrator) runDeepScan(ctx context.Context, scanID int64) error {
-	zap := NewZAP(o.cfg.Target, o.cfg.ToolsDir)
-	zap.Results = o.results
-	return zap.Run(ctx)
+	o.emitProgress(types.StageDeepScan, "ZAP", 0)
+	for _, target := range o.activeTargets() {
+		zap := NewZAP(target, o.cfg.ToolsDir)
+		zap.Results = o.enrichResults()
+		if err := zap.Run(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (o *Orchestrator) runSAST(ctx context.Context, scanID int64) error {
+	o.emitProgress(types.StageSAST, "Semgrep", 0.5)
 	semgrep := NewSemgrep(o.cfg.Target, o.cfg.ToolsDir)
-	semgrep.Results = o.results
+	semgrep.Results = o.enrichResults()
 	if err := semgrep.Run(ctx); err != nil {
 		return err
 	}
 
+	o.emitProgress(types.StageSAST, "Bearer", 1.0)
 	bearer := NewBearer(o.cfg.Target, o.cfg.ToolsDir)
-	bearer.Results = o.results
+	bearer.Results = o.enrichResults()
 	return bearer.Run(ctx)
 }
 
 func (o *Orchestrator) runSecrets(ctx context.Context, scanID int64) error {
+	o.emitProgress(types.StageSecrets, "TruffleHog", 0)
 	trufflehog := NewTruffleHog(o.cfg.Target, o.cfg.ToolsDir)
-	trufflehog.Results = o.results
+	trufflehog.Results = o.enrichResults()
 	return trufflehog.Run(ctx)
+}
+
+func (o *Orchestrator) emitProgress(stage types.ScanStage, tool string, progress float64) {
+	if o.OnStage != nil {
+		o.OnStage(stage, tool, progress)
+	}
+}
+
+func (o *Orchestrator) activeTargets() []string {
+	if len(o.targets) > 0 {
+		return o.targets
+	}
+	return []string{o.cfg.Target}
+}
+
+func (o *Orchestrator) sendResult(finding types.Finding) {
+	normalizer.EnrichWithOWASP2025(&finding)
+	if finding.CVE != "" {
+		if score, _ := GetEPSS(finding.CVE); score > 0 {
+			finding.EPSS = score
+		}
+	}
+	o.results <- finding
+}
+
+func (o *Orchestrator) enrichResults() chan<- types.Finding {
+	ch := make(chan types.Finding, 1000)
+	go func() {
+		for f := range ch {
+			o.sendResult(f)
+		}
+	}()
+	return ch
 }
 
 func uniqueStrings(s []string) []string {

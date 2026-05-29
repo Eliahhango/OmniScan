@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -56,11 +58,16 @@ type niktoItem struct {
 }
 
 func parseNiktoOutput(data []byte, results chan<- types.Finding) {
-	var items []niktoItem
-	if err := json.Unmarshal(data, &items); err != nil {
-		return
-	}
-	for _, item := range items {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var item niktoItem
+		if err := json.Unmarshal(line, &item); err != nil {
+			continue
+		}
 		results <- types.Finding{
 			ID:          fmt.Sprintf("nikto-%s", item.ID),
 			Title:       item.Description,

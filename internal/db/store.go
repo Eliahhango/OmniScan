@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -198,20 +199,7 @@ func splitStrings(s string) []string {
 	if s == "" {
 		return nil
 	}
-	return stringsSplit(s, ",")
-}
-
-func stringsSplit(s, sep string) []string {
-	var result []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i:i+len(sep)] == sep {
-			result = append(result, s[start:i])
-			start = i + len(sep)
-		}
-	}
-	result = append(result, s[start:])
-	return result
+	return strings.Split(s, ",")
 }
 
 type ScanState struct {

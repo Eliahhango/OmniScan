@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
@@ -103,7 +102,6 @@ type App struct {
 	help         help.Model
 	keys         keyMap
 
-	simStep    int
 	orch       *scanner.Orchestrator
 	orchCtx    context.Context
 	orchCancel context.CancelFunc
@@ -229,10 +227,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.activeTab = (a.activeTab - 1 + len(a.tabNames)) % len(a.tabNames)
 		case key.Matches(msg, a.keys.Scan):
 			if a.status != "SCANNING" && a.target != "" {
-				if a.orch != nil {
-					return a, a.startRealScan()
-				}
-				return a, a.startScan()
+				return a, a.startRealScan()
 			}
 		case key.Matches(msg, a.keys.Export):
 			a.AddLog("Export requested")
@@ -269,25 +264,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.AddLog(msg.log)
 		}
 		pCmd := a.scanProgress.SetPercent(msg.progress)
-		cmds = append(cmds, pCmd, a.simulateNext())
-		if msg.progress >= 0.3 && rand.Float64() < 0.25 && msg.tool != "" {
-			severities := []types.Severity{
-				types.SeverityCritical, types.SeverityHigh,
-				types.SeverityMedium, types.SeverityLow, types.SeverityInfo,
-			}
-			sev := severities[rand.Intn(len(severities))]
-			f := types.Finding{
-				ID:          fmt.Sprintf("FIND-%d", len(a.findings)+1),
-				Title:       fmt.Sprintf("[%s] Security issue detected", msg.tool),
-				Severity:    sev,
-				ToolSource:  msg.tool,
-				Timestamp:   time.Now(),
-			}
-			if a.target != "" {
-				f.AffectedURL = fmt.Sprintf("https://%s/%s", a.target, msg.tool)
-			}
-			a.AddFinding(f)
-		}
+		cmds = append(cmds, pCmd)
 
 	case ScanCompleteMsg:
 		a.scanDuration = time.Since(a.scanStartTime)
@@ -309,66 +286,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
-func (a *App) startScan() tea.Cmd {
-	a.status = "SCANNING"
-	a.scanStartTime = time.Now()
-	a.simStep = 0
-	a.AddLog("Scan started")
-	return tea.Batch(
-		func() tea.Msg {
-			return StatusMsg{Message: "Scan pipeline started", Time: time.Now()}
-		},
-		a.simulateNext(),
-	)
-}
 
-func (a *App) simulateNext() tea.Cmd {
-	type simStep struct {
-		delay    time.Duration
-		stage    types.ScanStage
-		tool     string
-		progress float64
-		log      string
-	}
-
-	steps := []simStep{
-		{1 * time.Second, types.StageRecon, "Nuclei", 0.2, "Nuclei: starting subdomain scan..."},
-		{2 * time.Second, types.StageRecon, "Nuclei", 0.6, "Nuclei: enumerating endpoints..."},
-		{2 * time.Second, types.StageRecon, "Nuclei", 1.0, "Nuclei: reconnaissance complete"},
-		{2 * time.Second, types.StageCrawling, "ZAP", 0.4, "ZAP: spidering target..."},
-		{2 * time.Second, types.StageCrawling, "ZAP", 0.8, "ZAP: crawling results: 42 endpoints"},
-		{1 * time.Second, types.StageCrawling, "ZAP", 1.0, "ZAP: crawling complete"},
-		{2 * time.Second, types.StageFuzzing, "FFUF", 0.5, "FFUF: fuzzing for hidden paths..."},
-		{2 * time.Second, types.StageFuzzing, "FFUF", 1.0, "FFUF: found 3 hidden directories"},
-		{2 * time.Second, types.StageVulnScan, "Nikto", 0.3, "Nikto: scanning for CVEs..."},
-		{2 * time.Second, types.StageVulnScan, "Nikto", 0.7, "Nikto: analyzing server config..."},
-		{2 * time.Second, types.StageVulnScan, "Nikto", 1.0, "Nikto: vulnerability scan complete"},
-		{2 * time.Second, types.StageDeepScan, "Semgrep", 0.5, "Semgrep: static analysis in progress..."},
-		{2 * time.Second, types.StageDeepScan, "Semgrep", 1.0, "Semgrep: analysis complete"},
-		{2 * time.Second, types.StageSecrets, "TruffleHog", 0.6, "TruffleHog: scanning for secrets..."},
-		{2 * time.Second, types.StageSecrets, "TruffleHog", 1.0, "TruffleHog: secrets scan complete"},
-		{1 * time.Second, types.StageReporting, "", 0.5, "Generating report..."},
-		{1 * time.Second, types.StageReporting, "", 1.0, "Report generated"},
-	}
-
-	if a.simStep >= len(steps) {
-		a.simStep = 0
-		return func() tea.Msg {
-			return ScanCompleteMsg{}
-		}
-	}
-
-	s := steps[a.simStep]
-	a.simStep++
-	return tea.Tick(s.delay, func(t time.Time) tea.Msg {
-		return scanStepMsg{
-			stage:    s.stage,
-			tool:     s.tool,
-			progress: s.progress,
-			log:      s.log,
-		}
-	})
-}
 
 func (a *App) renderTabs() string {
 	var tabs []string
@@ -413,6 +331,15 @@ func (a *App) startRealScan() tea.Cmd {
 	a.refreshTable()
 	a.AddLog("Real scan started via orchestrator")
 
+	a.orch.OnStage = func(stage types.ScanStage, tool string, progress float64) {
+		a.program.Send(scanStepMsg{
+			stage:    stage,
+			tool:     tool,
+			progress: progress / 100,
+			log:      fmt.Sprintf("Stage: %v | Tool: %s", stage, tool),
+		})
+	}
+
 	a.orchCtx, a.orchCancel = context.WithCancel(context.Background())
 
 	go a.runOrchInBackground()
@@ -420,14 +347,6 @@ func (a *App) startRealScan() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
 			return StatusMsg{Message: "Real scan pipeline started", Time: time.Now()}
-		},
-		func() tea.Msg {
-			return scanStepMsg{
-				stage:    types.StageRecon,
-				tool:     "Orchestrator",
-				progress: 0.1,
-				log:      "Real scan engine engaged",
-			}
 		},
 	)
 }
@@ -442,15 +361,26 @@ func (a *App) runOrchInBackground() {
 		}
 	}()
 
-	for finding := range a.orch.Results() {
-		a.program.Send(FindingMsg{Finding: finding})
-	}
-
-	for err := range a.orch.Errors() {
-		a.program.Send(StatusMsg{
-			Message: fmt.Sprintf("Scan error: %v", err),
-			Time:    time.Now(),
-		})
+	resultsDone := false
+	errorsDone := false
+	for !resultsDone || !errorsDone {
+		select {
+		case finding, ok := <-a.orch.Results():
+			if !ok {
+				resultsDone = true
+				break
+			}
+			a.program.Send(FindingMsg{Finding: finding})
+		case err, ok := <-a.orch.Errors():
+			if !ok {
+				errorsDone = true
+				break
+			}
+			a.program.Send(StatusMsg{
+				Message: fmt.Sprintf("Error: %v", err),
+				Time:    time.Now(),
+			})
+		}
 	}
 
 	a.program.Send(realScanMsg{

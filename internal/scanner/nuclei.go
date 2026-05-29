@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Eliahhango/OmniScan/pkg/types"
@@ -111,24 +112,6 @@ func (n *Nuclei) Run(ctx context.Context) error {
 	return nil
 }
 
-type nucleiResult struct {
-	TemplateID    string    `json:"template-id"`
-	Info          nucleiInfo `json:"info"`
-	Host          string    `json:"host"`
-	MatchedAt     string    `json:"matched-at"`
-	ExtractedResults []string `json:"extracted-results"`
-	Type          string    `json:"type"`
-	Timestamp     string    `json:"timestamp"`
-}
-
-type nucleiInfo struct {
-	Name        string   `json:"name"`
-	Severity    string   `json:"severity"`
-	Description string   `json:"description"`
-	Tags        []string `json:"tags"`
-	Remediation string   `json:"remediation"`
-}
-
 func parseNucleiLine(data []byte) (*types.Finding, error) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -136,34 +119,99 @@ func parseNucleiLine(data []byte) (*types.Finding, error) {
 	}
 
 	templateID, _ := raw["template-id"].(string)
-
-	var severity types.Severity
-	if info, ok := raw["info"].(map[string]interface{}); ok {
-		if s, ok := info["severity"].(string); ok {
-			severity = types.Severity(s)
-		}
-	}
-
 	host, _ := raw["host"].(string)
 	matchedAt, _ := raw["matched-at"].(string)
 	if matchedAt == "" {
 		matchedAt = host
 	}
 
-	title := templateID
+	var severity types.Severity
+	var title, description, remediation string
+	var cve string
+	var cwes []string
+	var cvssScore float64
+	var classification string
+
 	if info, ok := raw["info"].(map[string]interface{}); ok {
-		if name, ok := info["name"].(string); ok {
-			title = name
+		if s, ok := info["severity"].(string); ok {
+			severity = types.Severity(s)
+		}
+		if n, ok := info["name"].(string); ok {
+			title = n
+		}
+		if d, ok := info["description"].(string); ok {
+			description = d
+		}
+		if r, ok := info["remediation"].(string); ok {
+			remediation = r
+		}
+
+		var tags []string
+		if t, ok := info["tags"].(string); ok {
+			for _, tag := range strings.Split(t, ",") {
+				tag = strings.TrimSpace(tag)
+				tags = append(tags, tag)
+			}
+		} else if t, ok := info["tags"].([]interface{}); ok {
+			for _, tag := range t {
+				tags = append(tags, fmt.Sprintf("%v", tag))
+			}
+		}
+
+		for _, tag := range tags {
+			upper := strings.ToUpper(tag)
+			if strings.HasPrefix(upper, "CVE-") {
+				cve = upper
+			}
+			if strings.HasPrefix(upper, "CWE-") {
+				cwes = append(cwes, upper)
+			}
+		}
+
+		if class, ok := info["classification"].(map[string]interface{}); ok {
+			if cvss, ok := class["cvss-score"].(float64); ok {
+				cvssScore = cvss
+			}
+			if c, ok := class["cve-id"].(string); ok && cve == "" {
+				cve = c
+			}
+			if c, ok := class["cwe-id"].(string); ok && len(cwes) == 0 {
+				cwes = strings.Split(c, ",")
+			}
+			if c, ok := class["cvss-metrics"].(string); ok {
+				classification = c
+			}
 		}
 	}
 
+	extracted, _ := raw["extracted-results"].([]interface{})
+	var proof string
+	if len(extracted) > 0 {
+		proof = fmt.Sprintf("%v", extracted[0])
+	}
+
+	if title == "" {
+		title = templateID
+	}
+
+	id := fmt.Sprintf("nuclei-%s-%s", templateID, matchedAt)
+	if len(id) > 128 {
+		id = id[:128]
+	}
+
 	return &types.Finding{
-		ID:          fmt.Sprintf("nuclei-%s-%s", templateID, matchedAt),
-		Title:       title,
-		Severity:    severity,
-		AffectedURL: matchedAt,
-		CVE:         templateID,
-		ToolSource:  "nuclei",
-		Timestamp:   time.Now(),
+		ID:           id,
+		Title:        title,
+		Description:  description,
+		Severity:     severity,
+		CVSS:         cvssScore,
+		CVSSVector:   classification,
+		CVE:          cve,
+		CWE:          cwes,
+		AffectedURL:  matchedAt,
+		Proof:        proof,
+		Remediation:  remediation,
+		ToolSource:   "nuclei",
+		Timestamp:    time.Now(),
 	}, nil
 }

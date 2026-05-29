@@ -2,6 +2,8 @@ package scanner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +28,13 @@ type ZAP struct {
 	APIKey   string
 	ToolsDir string
 	Results  chan<- types.Finding
+	cmd      *exec.Cmd
+}
+
+func generateAPIKey() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func NewZAP(target string, toolsDir string) *ZAP {
@@ -32,13 +42,17 @@ func NewZAP(target string, toolsDir string) *ZAP {
 		Target:   target,
 		Host:     "127.0.0.1",
 		Port:     8080,
-		APIKey:   "omniscan",
+		APIKey:   generateAPIKey(),
 		ToolsDir: toolsDir,
 	}
 }
 
 func (z *ZAP) Run(ctx context.Context) error {
-	zapPath := findTool("zap.sh", filepath.Join(z.ToolsDir, "zap"))
+	zapNames := []string{"zap.sh", "zap"}
+	if runtime.GOOS == "windows" {
+		zapNames = []string{"zap.bat", "zap.cmd", "zap.bat", "zap"}
+	}
+	zapPath := findToolMulti(zapNames, filepath.Join(z.ToolsDir, "zap"))
 
 	args := []string{
 		"-daemon",
@@ -55,7 +69,7 @@ func (z *ZAP) Run(ctx context.Context) error {
 			z.Results <- types.Finding{
 				ID:          "zap-skip",
 				Title:       "ZAP not available",
-				Description: fmt.Sprintf("ZAP binary not found: %v", err),
+				Description: "ZAP scanner encountered an error and was skipped",
 				Severity:    types.SeverityInfo,
 				ToolSource:  "zap",
 				Timestamp:   time.Now(),
@@ -63,6 +77,15 @@ func (z *ZAP) Run(ctx context.Context) error {
 		}
 		return nil
 	}
+	z.cmd = cmd
+
+	defer func() {
+		shutdownURL := fmt.Sprintf("http://%s:%d/JSON/core/action/shutdown/?apikey=%s", z.Host, z.Port, z.APIKey)
+		http.Get(shutdownURL)
+		if z.cmd != nil && z.cmd.Process != nil {
+			z.cmd.Process.Kill()
+		}
+	}()
 
 	baseURL := fmt.Sprintf("http://%s:%d", z.Host, z.Port)
 

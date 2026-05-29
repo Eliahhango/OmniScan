@@ -34,7 +34,7 @@ func (n *Nikto) Run(ctx context.Context) error {
 			n.Results <- types.Finding{
 				ID:          "nikto-skip",
 				Title:       "Nikto not available",
-				Description: fmt.Sprintf("nikto error: %v", err),
+				Description: "Nikto scanner encountered an error and was skipped",
 				Severity:    types.SeverityInfo,
 				ToolSource:  "nikto",
 				Timestamp:   time.Now(),

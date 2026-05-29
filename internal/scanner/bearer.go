@@ -31,7 +31,7 @@ func (b *BearerScanner) Run(ctx context.Context) error {
 			b.Results <- types.Finding{
 				ID:          "bearer-skip",
 				Title:       "Bearer not available",
-				Description: fmt.Sprintf("Bearer SAST scanner not found: %v. Install with: brew install bearer/tap/bearer or curl -fsSL https://raw.githubusercontent.com/Bearer/bearer/main/install.sh | bash", err),
+				Description: "Bearer SAST scanner encountered an error and was skipped",
 				Severity:    types.SeverityInfo,
 				ToolSource:  "bearer",
 				Timestamp:   time.Now(),

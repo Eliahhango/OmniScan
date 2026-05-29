@@ -34,7 +34,7 @@ func (t *TruffleHog) Run(ctx context.Context) error {
 			t.Results <- types.Finding{
 				ID:          "trufflehog-skip",
 				Title:       "TruffleHog not available",
-				Description: fmt.Sprintf("trufflehog error: %v", err),
+				Description: "TruffleHog scanner encountered an error and was skipped",
 				Severity:    types.SeverityInfo,
 				ToolSource:  "trufflehog",
 				Timestamp:   time.Now(),

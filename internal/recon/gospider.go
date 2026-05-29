@@ -19,6 +19,9 @@ func NewGospider(target string) *Gospider {
 }
 
 func (g *Gospider) Run(ctx context.Context) ([]string, error) {
+	if err := ValidateTarget(g.Target); err != nil {
+		return nil, err
+	}
 	outputDir, err := os.MkdirTemp("", "gospider-*")
 	if err != nil {
 		return nil, err

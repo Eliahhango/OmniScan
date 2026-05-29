@@ -197,6 +197,13 @@ func ParseOpenVASOutput(xmlData []byte) ([]types.Finding, error) {
 	return nil, nil
 }
 
+func RedactSecret(s string) string {
+	if len(s) <= 8 {
+		return "****"
+	}
+	return s[:4] + "****" + s[len(s)-4:]
+}
+
 func ParseTrufflehogOutput(jsonLine []byte) (*types.Finding, error) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(jsonLine, &raw); err != nil {
@@ -214,11 +221,14 @@ func ParseTrufflehogOutput(jsonLine []byte) (*types.Finding, error) {
 	detectorName, _ := raw["DetectorName"].(string)
 	rawData, _ := raw["Raw"].(string)
 
+	hash := sha256.Sum256([]byte(rawData))
+
 	finding := &types.Finding{
 		Title:       fmt.Sprintf("Secret: %s", detectorName),
 		Description: fmt.Sprintf("Secret detected by TruffleHog - %s", detectorName),
 		Severity:    types.SeverityCritical,
-		Payload:     rawData[:min(len(rawData), 100)],
+		Payload:     RedactSecret(rawData),
+		SecretHash:  fmt.Sprintf("%x", hash),
 		Remediation: remediation,
 		ToolSource:  "trufflehog",
 		Timestamp:   time.Now(),

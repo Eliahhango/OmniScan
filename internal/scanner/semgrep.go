@@ -32,7 +32,7 @@ func (s *Semgrep) Run(ctx context.Context) error {
 			s.Results <- types.Finding{
 				ID:          "semgrep-skip",
 				Title:       "Semgrep not available",
-				Description: fmt.Sprintf("semgrep error: %v", err),
+				Description: "Semgrep scanner encountered an error and was skipped",
 				Severity:    types.SeverityInfo,
 				ToolSource:  "semgrep",
 				Timestamp:   time.Now(),

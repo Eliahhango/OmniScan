@@ -50,7 +50,7 @@ func (f *FFUF) Run(ctx context.Context) error {
 			f.Results <- types.Finding{
 				ID:          "ffuf-skip",
 				Title:       "FFUF not available",
-				Description: fmt.Sprintf("ffuf error: %v", err),
+				Description: "FFUF scanner encountered an error and was skipped",
 				Severity:    types.SeverityInfo,
 				ToolSource:  "ffuf",
 				Timestamp:   time.Now(),

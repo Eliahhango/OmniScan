@@ -9,7 +9,8 @@ import (
 )
 
 type Katana struct {
-	Targets []string
+	Targets   []string
+	RateLimit int
 }
 
 func NewKatana(targets []string) *Katana {
@@ -17,12 +18,19 @@ func NewKatana(targets []string) *Katana {
 }
 
 func (k *Katana) Run(ctx context.Context) ([]string, error) {
+	if len(k.Targets) == 0 {
+		return nil, nil
+	}
+	args := []string{"-silent"}
+	if k.RateLimit > 0 {
+		args = append(args, "-rl", fmt.Sprintf("%d", k.RateLimit))
+	}
 	input := strings.Join(k.Targets, "\n")
-	cmd := exec.CommandContext(ctx, "katana", "-silent")
+	cmd := exec.CommandContext(ctx, "katana", args...)
 	cmd.Stdin = strings.NewReader(input)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return k.Targets, nil
+		return nil, fmt.Errorf("katana: %w", err)
 	}
 
 	var urls []string
@@ -32,9 +40,6 @@ func (k *Katana) Run(ctx context.Context) ([]string, error) {
 		if line != "" {
 			urls = append(urls, line)
 		}
-	}
-	if len(urls) == 0 {
-		return k.Targets, nil
 	}
 	return urls, nil
 }
@@ -48,6 +53,9 @@ func NewGAU(target string) *GAU {
 }
 
 func (g *GAU) Run(ctx context.Context) ([]string, error) {
+	if err := ValidateTarget(g.Target); err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(ctx, "gau", g.Target)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

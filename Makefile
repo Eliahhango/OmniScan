@@ -19,9 +19,9 @@ test:
 	go test ./...
 
 clean:
-	rm -rf $(BUILD_DIR)
-	rm -f *.db
-	rm -rf reports/
+	go clean -cache
+	go clean -i ./...
+	go clean ./...
 
 lint:
 	go vet ./...
@@ -36,8 +36,7 @@ install:
 	go install ./cmd/omniscan
 
 quick:
-	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/omniscan
-	./$(BUILD_DIR)/$(BINARY) tui
+	go run ./cmd/omniscan tui
 
 docker:
 	docker build -t omniscan:latest .

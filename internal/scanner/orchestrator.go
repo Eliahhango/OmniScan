@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -118,9 +119,10 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
 	o.emitProgress(types.StageRecon, "Subfinder", 0.2)
 	subfinder := recon.NewSubfinder(o.cfg.Target)
+	subfinder.RateLimit = o.cfg.RateLimit
 	subdomains, err := subfinder.Run(ctx)
 	if err != nil {
-		return err
+		subdomains = []string{o.cfg.Target}
 	}
 
 	o.emitProgress(types.StageRecon, "Httpx", 0.5)
@@ -128,7 +130,7 @@ func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
 
 	alive, err := httpx.Run(ctx)
 	if err != nil {
-		return err
+		alive = subdomains
 	}
 
 	o.targets = alive
@@ -170,6 +172,7 @@ func (o *Orchestrator) runCrawling(ctx context.Context, scanID int64) error {
 
 	o.emitProgress(types.StageCrawling, "Katana", 0.3)
 	katana := recon.NewKatana(o.activeTargets())
+	katana.RateLimit = o.cfg.RateLimit
 	katanaURLs, err := katana.Run(ctx)
 	if err == nil {
 		urls = append(urls, katanaURLs...)
@@ -289,7 +292,10 @@ func (o *Orchestrator) sendResult(finding types.Finding) {
 			finding.EPSS = score
 		}
 	}
-	o.results <- finding
+	select {
+	case o.results <- finding:
+	default:
+	}
 }
 
 func (o *Orchestrator) enrichResults() chan<- types.Finding {
@@ -324,16 +330,43 @@ func runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
 }
 
 func findTool(name string, extraPaths ...string) string {
-	if path, err := exec.LookPath(name); err == nil {
-		return path
+	return findToolMulti([]string{name}, extraPaths...)
+}
+
+func findToolMulti(names []string, extraPaths ...string) string {
+	safe := make([]string, len(names))
+	for i, n := range names {
+		safe[i] = filepath.Base(n)
 	}
-	for _, dir := range extraPaths {
-		path := filepath.Join(dir, name)
-		if _, err := os.Stat(path); err == nil {
+	for _, name := range safe {
+		if runtime.GOOS == "windows" && !strings.Contains(name, ".") {
+			for _, ext := range []string{".exe", ".bat", ".cmd"} {
+				if path, err := exec.LookPath(name + ext); err == nil {
+					return path
+				}
+			}
+		}
+		if path, err := exec.LookPath(name); err == nil {
 			return path
 		}
 	}
-	return name
+	for _, name := range safe {
+		for _, dir := range extraPaths {
+			path := filepath.Join(dir, name)
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
+			if runtime.GOOS == "windows" && !strings.Contains(name, ".") {
+				for _, ext := range []string{".exe", ".bat", ".cmd"} {
+					path := filepath.Join(dir, name+ext)
+					if _, err := os.Stat(path); err == nil {
+						return path
+					}
+				}
+			}
+		}
+	}
+	return safe[0]
 }
 
 func writeTargetsFile(targets []string, dir string) (string, error) {
@@ -356,6 +389,7 @@ type Installer struct {
 	ToolsDir string
 	Results  map[string]InstallResult
 	mu       sync.Mutex
+	Progress chan<- InstallResult
 }
 
 func NewInstaller(toolsDir string) *Installer {
@@ -397,6 +431,9 @@ func (i *Installer) InstallAll() map[string]InstallResult {
 			i.mu.Lock()
 			i.Results[name] = result
 			i.mu.Unlock()
+			if i.Progress != nil {
+				i.Progress <- result
+			}
 		}(name, fn)
 	}
 	wg.Wait()

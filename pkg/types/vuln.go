@@ -48,6 +48,7 @@ type Finding struct {
 	AffectedURL    string    `json:"affected_url"`
 	AffectedParam  string    `json:"affected_param,omitempty"`
 	Payload        string    `json:"payload,omitempty"`
+	SecretHash     string    `json:"secret_hash,omitempty"`
 	Proof          string    `json:"proof,omitempty"`
 	Remediation    string    `json:"remediation,omitempty"`
 	ToolSource     string    `json:"tool_source"`

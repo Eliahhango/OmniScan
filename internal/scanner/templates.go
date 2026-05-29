@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,12 +10,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 type TemplateManager struct {
 	TemplateDir string
 	HTTPClient  *http.Client
+	mu          sync.Mutex
+	tagCache    map[string]tagInfo
 }
 
 type TemplateInfo struct {
@@ -36,7 +40,15 @@ func NewTemplateManager(templateDir string) *TemplateManager {
 
 func (tm *TemplateManager) UpdateTemplates() error {
 	url := "https://github.com/projectdiscovery/nuclei-templates/archive/refs/heads/main.zip"
-	resp, err := tm.HTTPClient.Get(url)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	resp, err := tm.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download templates: %w", err)
 	}
@@ -46,37 +58,50 @@ func (tm *TemplateManager) UpdateTemplates() error {
 		return fmt.Errorf("bad status: %d", resp.StatusCode)
 	}
 
-	tmpFile := filepath.Join(os.TempDir(), "nuclei-templates.zip")
-	out, err := os.Create(tmpFile)
+	tmpFile, err := os.CreateTemp("", "nuclei-templates-*.zip")
 	if err != nil {
 		return err
 	}
+	tmpPath := tmpFile.Name()
 
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		out.Close()
-		os.Remove(tmpFile)
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
 		return err
 	}
-	out.Close()
+	tmpFile.Close()
 
 	if err := os.RemoveAll(tm.TemplateDir); err != nil {
-		os.Remove(tmpFile)
+		os.Remove(tmpPath)
 		return err
 	}
 
-	reader, err := zip.OpenReader(tmpFile)
+	reader, err := zip.OpenReader(tmpPath)
 	if err != nil {
-		os.Remove(tmpFile)
+		os.Remove(tmpPath)
 		return err
 	}
 
 	extractDir := tm.TemplateDir
+	absExtractDir, err := filepath.Abs(filepath.Clean(extractDir))
+	if err != nil {
+		reader.Close()
+		os.Remove(tmpPath)
+		return err
+	}
 	for _, f := range reader.File {
 		parts := strings.SplitN(f.Name, "/", 2)
 		if len(parts) < 2 {
 			continue
 		}
 		targetPath := filepath.Join(extractDir, parts[1])
+		absTarget, err := filepath.Abs(filepath.Clean(targetPath))
+		if err != nil {
+			continue
+		}
+		if !strings.HasPrefix(absTarget, absExtractDir+string(filepath.Separator)) && absTarget != absExtractDir {
+			continue
+		}
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(targetPath, 0755)
@@ -103,12 +128,19 @@ func (tm *TemplateManager) UpdateTemplates() error {
 	}
 
 	reader.Close()
-	os.Remove(tmpFile)
+	os.Remove(tmpPath)
+	tm.mu.Lock()
+	tm.tagCache = nil
+	tm.mu.Unlock()
 	return nil
 }
 
 func (tm *TemplateManager) applyFileMode(path string, mode os.FileMode) {
-	os.Chmod(path, mode)
+	safe := mode & os.ModePerm
+	if safe&0022 != 0 {
+		safe &^= 0022
+	}
+	os.Chmod(path, safe)
 }
 
 type tagInfo struct {
@@ -120,8 +152,22 @@ type tagInfo struct {
 }
 
 func (tm *TemplateManager) TagTemplates() (map[string]tagInfo, error) {
-	tags := make(map[string]tagInfo)
+	tm.mu.Lock()
+	if tm.tagCache != nil {
+		cache := tm.tagCache
+		tm.mu.Unlock()
+		return cache, nil
+	}
+	tm.mu.Unlock()
 
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	if tm.tagCache != nil {
+		return tm.tagCache, nil
+	}
+
+	tags := make(map[string]tagInfo)
 	err := filepath.Walk(tm.TemplateDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -150,7 +196,9 @@ func (tm *TemplateManager) TagTemplates() (map[string]tagInfo, error) {
 
 		return nil
 	})
-
+	if err == nil {
+		tm.tagCache = tags
+	}
 	return tags, err
 }
 

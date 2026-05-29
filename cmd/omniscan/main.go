@@ -174,21 +174,31 @@ func runScan(configPath string) {
 func runSetup() {
 	fmt.Println("OmniScan - Installing tools...")
 
+	progress := make(chan scanner.InstallResult, 13)
 	installer := scanner.NewInstaller("tools")
-	results := installer.InstallAll()
+	installer.Progress = progress
 
-	success := 0
-	failed := 0
-	for name, result := range results {
-		if result.Status == "installed" {
-			fmt.Printf("  [+] %s - installed\n", name)
+	go func() {
+		for r := range progress {
+			if r.Status == "installed" {
+				fmt.Printf("  [+] %s - installed\n", r.Name)
+			} else {
+				fmt.Printf("  [-] %s - %s\n", r.Name, r.Error)
+			}
+		}
+	}()
+
+	results := installer.InstallAll()
+	close(progress)
+
+	success, failed := 0, 0
+	for _, r := range results {
+		if r.Status == "installed" {
 			success++
 		} else {
-			fmt.Printf("  [-] %s - %s\n", name, result.Error)
 			failed++
 		}
 	}
-
 	fmt.Printf("\nInstalled: %d, Failed: %d (manual install required)\n", success, failed)
 }
 

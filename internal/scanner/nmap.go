@@ -43,7 +43,7 @@ func (n *NmapScanner) Run(ctx context.Context) error {
 			n.Results <- types.Finding{
 				ID:          "nmap-skip",
 				Title:       "Nmap not available",
-				Description: fmt.Sprintf("nmap error: %v", err),
+				Description: "Nmap scanner encountered an error and was skipped",
 				Severity:    types.SeverityInfo,
 				ToolSource:  "nmap",
 				Timestamp:   time.Now(),

@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -11,7 +12,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	key []byte
 }
 
 func New(path string) (*Store, error) {
@@ -19,9 +21,16 @@ func New(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	store := &Store{db: db}
+	key, err := loadOrCreateKey(path)
+	if err != nil {
+		return nil, fmt.Errorf("load encryption key: %w", err)
+	}
+	store := &Store{db: db, key: key}
 	if err := store.migrate(); err != nil {
 		return nil, fmt.Errorf("migrate db: %w", err)
+	}
+	if fi, err := os.Stat(path); err == nil {
+		os.Chmod(path, fi.Mode()|0600)
 	}
 	return store, nil
 }
@@ -95,7 +104,21 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+const maxTargetLen = 1024
+const maxFieldLen = 4096
+
+func truncate(s string, max int) string {
+	if len(s) > max {
+		return s[:max]
+	}
+	return s
+}
+
 func (s *Store) CreateScan(target string, scope []string) (int64, error) {
+	target = truncate(target, maxTargetLen)
+	for i := range scope {
+		scope[i] = truncate(scope[i], maxTargetLen)
+	}
 	result, err := s.db.Exec(
 		`INSERT INTO scans (target, scope, status, started_at) VALUES (?, ?, 'running', ?)`,
 		target, joinStrings(scope), time.Now(),
@@ -107,6 +130,24 @@ func (s *Store) CreateScan(target string, scope []string) (int64, error) {
 }
 
 func (s *Store) SaveFinding(scanID int64, f *types.Finding) error {
+	f.ID = truncate(f.ID, maxFieldLen)
+	f.Title = truncate(f.Title, maxFieldLen)
+	f.Description = truncate(f.Description, maxFieldLen)
+	f.CVE = truncate(f.CVE, maxFieldLen)
+	f.OWASP2025 = truncate(f.OWASP2025, maxFieldLen)
+	f.AffectedURL = truncate(f.AffectedURL, maxTargetLen)
+	f.AffectedParam = truncate(f.AffectedParam, maxFieldLen)
+	f.Remediation = truncate(f.Remediation, maxFieldLen)
+	f.ToolSource = truncate(f.ToolSource, maxFieldLen)
+	f.CVSSVector = truncate(f.CVSSVector, maxFieldLen)
+	for i := range f.CWE {
+		f.CWE[i] = truncate(f.CWE[i], maxFieldLen)
+	}
+	for i := range f.BountyPlatforms {
+		f.BountyPlatforms[i] = truncate(f.BountyPlatforms[i], maxFieldLen)
+	}
+	encPayload, _ := encrypt(f.Payload, s.key)
+	encProof, _ := encrypt(f.Proof, s.key)
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO findings (
 			id, scan_id, title, description, severity, cvss, cve, cwe,
@@ -116,7 +157,7 @@ func (s *Store) SaveFinding(scanID int64, f *types.Finding) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.ID, scanID, f.Title, f.Description, string(f.Severity), f.CVSS,
 		f.CVE, joinStrings(f.CWE), f.OWASP2025, f.AffectedURL, f.AffectedParam,
-		f.Payload, f.Proof, f.Remediation, f.ToolSource, f.Timestamp,
+		encPayload, encProof, f.Remediation, f.ToolSource, f.Timestamp,
 		f.CVSSVector, f.EPSS, boolToInt(f.FalsePositive), joinStrings(f.BountyPlatforms),
 	)
 	return err
@@ -153,6 +194,14 @@ func (s *Store) GetFindings(scanID int64) ([]types.Finding, error) {
 		f.FalsePositive = falsePositive != 0
 		f.CWE = splitStrings(cwe)
 		f.BountyPlatforms = splitStrings(bountyPlatforms)
+		decPayload, err := decrypt(f.Payload, s.key)
+		if err == nil {
+			f.Payload = decPayload
+		}
+		decProof, err := decrypt(f.Proof, s.key)
+		if err == nil {
+			f.Proof = decProof
+		}
 		findings = append(findings, f)
 	}
 	return findings, nil

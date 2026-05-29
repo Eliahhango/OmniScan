@@ -68,7 +68,7 @@ func (n *Nuclei) Run(ctx context.Context) error {
 			n.Results <- types.Finding{
 				ID:          "nuclei-skip",
 				Title:       "Nuclei not available",
-				Description: fmt.Sprintf("Nuclei binary not found: %v", err),
+				Description: "Nuclei scanner encountered an error and was skipped",
 				Severity:    types.SeverityInfo,
 				ToolSource:  "nuclei",
 				Timestamp:   time.Now(),

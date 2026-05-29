@@ -3,12 +3,14 @@ package recon
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 )
 
 type Subfinder struct {
-	Target string
+	Target    string
+	RateLimit int
 }
 
 func NewSubfinder(target string) *Subfinder {
@@ -16,10 +18,17 @@ func NewSubfinder(target string) *Subfinder {
 }
 
 func (s *Subfinder) Run(ctx context.Context) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "subfinder", "-d", s.Target, "-silent")
+	if err := ValidateTarget(s.Target); err != nil {
+		return nil, err
+	}
+	args := []string{"-d", s.Target, "-silent"}
+	if s.RateLimit > 0 {
+		args = append(args, "-rl", fmt.Sprintf("%d", s.RateLimit))
+	}
+	cmd := exec.CommandContext(ctx, "subfinder", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return []string{s.Target}, nil
+		return nil, fmt.Errorf("subfinder: %w", err)
 	}
 
 	var subdomains []string
@@ -29,9 +38,6 @@ func (s *Subfinder) Run(ctx context.Context) ([]string, error) {
 		if line != "" {
 			subdomains = append(subdomains, line)
 		}
-	}
-	if len(subdomains) == 0 {
-		subdomains = append(subdomains, s.Target)
 	}
 	return subdomains, nil
 }
@@ -45,12 +51,15 @@ func NewHttpx(targets []string) *Httpx {
 }
 
 func (h *Httpx) Run(ctx context.Context) ([]string, error) {
+	if len(h.Targets) == 0 {
+		return nil, nil
+	}
 	input := strings.Join(h.Targets, "\n")
 	cmd := exec.CommandContext(ctx, "httpx", "-silent", "-status-code", "-title", "-tech-detect")
 	cmd.Stdin = strings.NewReader(input)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return h.Targets, nil
+		return nil, fmt.Errorf("httpx: %w", err)
 	}
 
 	var alive []string
@@ -64,19 +73,19 @@ func (h *Httpx) Run(ctx context.Context) ([]string, error) {
 			alive = append(alive, line)
 		}
 	}
-	if len(alive) == 0 {
-		return h.Targets, nil
-	}
 	return alive, nil
 }
 
 func (h *Httpx) RunWithTech(ctx context.Context) ([]ProbingResult, error) {
+	if len(h.Targets) == 0 {
+		return nil, nil
+	}
 	input := strings.Join(h.Targets, "\n")
 	cmd := exec.CommandContext(ctx, "httpx", "-silent", "-status-code", "-title", "-tech-detect")
 	cmd.Stdin = strings.NewReader(input)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("httpx tech: %w", err)
 	}
 
 	var results []ProbingResult

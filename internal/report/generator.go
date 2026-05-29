@@ -30,11 +30,12 @@ type ReportData struct {
 		Low      int
 		Info     int
 	}
-	TopCritical []types.Finding
-	CVSSAvg     float64
-	CWECount    int
+	TopCritical   []types.Finding
+	CVSSAvg       float64
+	CWECount      int
 	OWASPCoverage int
-	GeneratedAt string
+	OWASPCounts   map[string]int
+	GeneratedAt   string
 }
 
 func NewGenerator(outputDir string) *Generator {
@@ -78,6 +79,8 @@ func (g *Generator) buildReportData(target string, findings []types.Finding, dur
 		Findings:    findings,
 	}
 
+	data.OWASPCounts = make(map[string]int)
+
 	var totalCVSS float64
 	cweSet := make(map[string]bool)
 	owaspSet := make(map[string]bool)
@@ -102,6 +105,7 @@ func (g *Generator) buildReportData(target string, findings []types.Finding, dur
 		}
 		if f.OWASP2025 != "" {
 			owaspSet[f.OWASP2025] = true
+			data.OWASPCounts[f.OWASP2025]++
 		}
 	}
 
@@ -126,7 +130,29 @@ func (g *Generator) buildReportData(target string, findings []types.Finding, dur
 }
 
 func (g *Generator) GenerateHTML(data ReportData) error {
-	tmpl := template.Must(template.New("report").Parse(htmlTemplate))
+	funcMap := template.FuncMap{
+		"percent": func(count, total int) string {
+			if total == 0 {
+				return "0%"
+			}
+			return fmt.Sprintf("%.0f%%", float64(count)/float64(total)*100)
+		},
+		"owaspCategories": func() []string {
+			return []string{
+				"Broken Access Control",
+				"Cryptographic Failures",
+				"Injection",
+				"Insecure Design",
+				"Security Misconfiguration",
+				"Vulnerable and Outdated Components",
+				"Identification and Authentication Failures",
+				"Software and Data Integrity Failures",
+				"Security Logging and Monitoring Failures",
+				"SSRF",
+			}
+		},
+	}
+	tmpl := template.Must(template.New("report").Funcs(funcMap).Parse(htmlTemplate))
 	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.html", time.Now().Format("20060102-150405")))
 	f, err := os.Create(path)
 	if err != nil {
@@ -187,8 +213,30 @@ func (g *Generator) GenerateMarkdown(data ReportData) error {
 }
 
 func (g *Generator) GeneratePDF(data ReportData) error {
+	funcMap := template.FuncMap{
+		"percent": func(count, total int) string {
+			if total == 0 {
+				return "0%"
+			}
+			return fmt.Sprintf("%.0f%%", float64(count)/float64(total)*100)
+		},
+		"owaspCategories": func() []string {
+			return []string{
+				"Broken Access Control",
+				"Cryptographic Failures",
+				"Injection",
+				"Insecure Design",
+				"Security Misconfiguration",
+				"Vulnerable and Outdated Components",
+				"Identification and Authentication Failures",
+				"Software and Data Integrity Failures",
+				"Security Logging and Monitoring Failures",
+				"SSRF",
+			}
+		},
+	}
 	htmlPath := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.html", time.Now().Format("20060102-150405")))
-	tmpl := template.Must(template.New("report").Parse(htmlTemplate))
+	tmpl := template.Must(template.New("report").Funcs(funcMap).Parse(htmlTemplate))
 	f, err := os.Create(htmlPath)
 	if err != nil {
 		return err

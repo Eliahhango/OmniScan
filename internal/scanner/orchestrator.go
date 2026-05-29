@@ -14,17 +14,21 @@ import (
 	"github.com/Eliahhango/OmniScan/internal/db"
 	"github.com/Eliahhango/OmniScan/internal/normalizer"
 	"github.com/Eliahhango/OmniScan/internal/recon"
+	"github.com/Eliahhango/OmniScan/internal/webhook"
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
 
 type Orchestrator struct {
-	cfg      *OrchestratorConfig
-	db       *db.Store
-	results  chan types.Finding
-	errors   chan error
-	pipeline *types.ScanPipeline
-	targets  []string
-	OnStage  func(stage types.ScanStage, tool string, progress float64)
+	cfg        *OrchestratorConfig
+	db         *db.Store
+	results    chan types.Finding
+	errors     chan error
+	pipeline   *types.ScanPipeline
+	targets    []string
+	OnStage    func(stage types.ScanStage, tool string, progress float64)
+	epssClient *EPSSClient
+	reconCache *recon.ResultCache
+	webhook    *webhook.Client
 }
 
 type OrchestratorConfig struct {
@@ -35,14 +39,21 @@ type OrchestratorConfig struct {
 	OutputDir   string
 	ToolsDir    string
 	Resume      bool
+	DBPath      string
 }
 
 func NewOrchestrator(cfg *OrchestratorConfig, db *db.Store) *Orchestrator {
+	return NewOrchestratorWithWebhook(cfg, db, nil)
+}
+
+func NewOrchestratorWithWebhook(cfg *OrchestratorConfig, db *db.Store, wh *webhook.Client) *Orchestrator {
 	return &Orchestrator{
-		cfg:     cfg,
-		db:      db,
-		results: make(chan types.Finding, 1000),
-		errors:  make(chan error, 100),
+		cfg:        cfg,
+		db:         db,
+		results:    make(chan types.Finding, 1000),
+		errors:     make(chan error, 100),
+		epssClient: NewEPSSClient(),
+		webhook:    wh,
 		pipeline: &types.ScanPipeline{
 			Target:    cfg.Target,
 			Scope:     cfg.Scope,
@@ -61,34 +72,40 @@ func (o *Orchestrator) Errors() <-chan error {
 }
 
 func (o *Orchestrator) Run(ctx context.Context) error {
+	defer func() {
+		close(o.results)
+		close(o.errors)
+	}()
+
 	scanID, err := o.db.CreateScan(o.cfg.Target, o.cfg.Scope)
 	if err != nil {
 		return fmt.Errorf("create scan: %w", err)
 	}
 
-	var resumeStage types.ScanStage
+	var resumeStage int
 	if o.cfg.Resume {
 		stage, _, err := o.db.GetCheckpoint(scanID)
 		if err == nil {
-			resumeStage = types.ScanStage(stage)
+			resumeStage = stage
 		}
 	}
 
 	stages := []struct {
 		stage types.ScanStage
+		name  string
 		fn    func(context.Context, int64) error
 	}{
-		{types.StageRecon, o.runRecon},
-		{types.StageCrawling, o.runCrawling},
-		{types.StageFuzzing, o.runFuzzing},
-		{types.StageVulnScan, o.runVulnScan},
-		{types.StageDeepScan, o.runDeepScan},
-		{types.StageSAST, o.runSAST},
-		{types.StageSecrets, o.runSecrets},
+		{types.StageRecon, "Recon", o.runRecon},
+		{types.StageCrawling, "Crawling", o.runCrawling},
+		{types.StageFuzzing, "Fuzzing", o.runFuzzing},
+		{types.StageVulnScan, "VulnScan", o.runVulnScan},
+		{types.StageDeepScan, "DeepScan", o.runDeepScan},
+		{types.StageSAST, "SAST", o.runSAST},
+		{types.StageSecrets, "Secrets", o.runSecrets},
 	}
 
-	for _, s := range stages {
-		if s.stage < resumeStage {
+	for i, s := range stages {
+		if int(s.stage) <= resumeStage {
 			continue
 		}
 		select {
@@ -98,11 +115,14 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		}
 
 		o.pipeline.Stage = s.stage
-		o.pipeline.Progress = float64(s.stage) / float64(len(stages)) * 100
+		o.pipeline.Progress = float64(i+1) / float64(len(stages)) * 100
 		o.emitProgress(s.stage, "", o.pipeline.Progress)
 
 		if err := s.fn(ctx, scanID); err != nil {
-			o.errors <- fmt.Errorf("stage %d: %w", s.stage, err)
+			select {
+			case o.errors <- fmt.Errorf("stage %d: %w", s.stage, err):
+			default:
+			}
 		}
 		o.db.SaveCheckpoint(scanID, int(s.stage), "", "")
 	}
@@ -111,15 +131,21 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.pipeline.Progress = 100
 
 	o.db.UpdateScanStatus(scanID, "completed")
-	close(o.results)
-	close(o.errors)
 	return nil
 }
 
 func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
+	if o.reconCache == nil {
+		c, err := recon.NewResultCache(o.cfg.DBPath)
+		if err == nil {
+			o.reconCache = c
+		}
+	}
+
 	o.emitProgress(types.StageRecon, "Subfinder", 0.2)
 	subfinder := recon.NewSubfinder(o.cfg.Target)
 	subfinder.RateLimit = o.cfg.RateLimit
+	subfinder.Cache = o.reconCache
 	subdomains, err := subfinder.Run(ctx)
 	if err != nil {
 		subdomains = []string{o.cfg.Target}
@@ -173,6 +199,7 @@ func (o *Orchestrator) runCrawling(ctx context.Context, scanID int64) error {
 	o.emitProgress(types.StageCrawling, "Katana", 0.3)
 	katana := recon.NewKatana(o.activeTargets())
 	katana.RateLimit = o.cfg.RateLimit
+	katana.Cache = o.reconCache
 	katanaURLs, err := katana.Run(ctx)
 	if err == nil {
 		urls = append(urls, katanaURLs...)
@@ -180,6 +207,7 @@ func (o *Orchestrator) runCrawling(ctx context.Context, scanID int64) error {
 
 	o.emitProgress(types.StageCrawling, "GAU", 0.7)
 	gau := recon.NewGAU(o.cfg.Target)
+	gau.Cache = o.reconCache
 	gauURLs, err := gau.Run(ctx)
 	if err == nil {
 		urls = append(urls, gauURLs...)
@@ -205,9 +233,18 @@ func (o *Orchestrator) runFuzzing(ctx context.Context, scanID int64) error {
 	o.emitProgress(types.StageFuzzing, "FFUF", 0)
 	for _, target := range o.activeTargets() {
 		ffuf := NewFFUF(target, o.cfg.ToolsDir)
-		ffuf.Results = o.enrichResults()
+		ffuf.Results = o.enrichResults(ctx)
 		if err := ffuf.Run(ctx); err != nil {
-			return err
+			continue
+		}
+	}
+
+	o.emitProgress(types.StageFuzzing, "Gobuster", 50)
+	for _, target := range o.activeTargets() {
+		gobuster := NewGobuster(target, o.cfg.ToolsDir)
+		gobuster.Results = o.enrichResults(ctx)
+		if err := gobuster.Run(ctx); err != nil {
+			continue
 		}
 	}
 	return nil
@@ -217,23 +254,23 @@ func (o *Orchestrator) runVulnScan(ctx context.Context, scanID int64) error {
 	o.emitProgress(types.StageVulnScan, "Nuclei", 0)
 	for _, target := range o.activeTargets() {
 		nuclei := NewNuclei(target, o.cfg.RateLimit, o.cfg.ToolsDir)
-		nuclei.Results = o.enrichResults()
+		nuclei.Results = o.enrichResults(ctx)
 		if err := nuclei.Run(ctx); err != nil {
-			return err
+			continue
 		}
 
 		o.emitProgress(types.StageVulnScan, "Nikto", 33)
 		nikto := NewNikto(target, o.cfg.ToolsDir)
-		nikto.Results = o.enrichResults()
+		nikto.Results = o.enrichResults(ctx)
 		if err := nikto.Run(ctx); err != nil {
-			return err
+			continue
 		}
 
 		o.emitProgress(types.StageVulnScan, "OpenVAS", 66)
 		openvas := NewOpenVAS(target, o.cfg.ToolsDir)
-		openvas.Results = o.enrichResults()
+		openvas.Results = o.enrichResults(ctx)
 		if err := openvas.Run(ctx); err != nil {
-			return err
+			continue
 		}
 	}
 	return nil
@@ -243,9 +280,9 @@ func (o *Orchestrator) runDeepScan(ctx context.Context, scanID int64) error {
 	o.emitProgress(types.StageDeepScan, "ZAP", 0)
 	for _, target := range o.activeTargets() {
 		zap := NewZAP(target, o.cfg.ToolsDir)
-		zap.Results = o.enrichResults()
+		zap.Results = o.enrichResults(ctx)
 		if err := zap.Run(ctx); err != nil {
-			return err
+			continue
 		}
 	}
 	return nil
@@ -254,21 +291,21 @@ func (o *Orchestrator) runDeepScan(ctx context.Context, scanID int64) error {
 func (o *Orchestrator) runSAST(ctx context.Context, scanID int64) error {
 	o.emitProgress(types.StageSAST, "Semgrep", 0.5)
 	semgrep := NewSemgrep(o.cfg.Target, o.cfg.ToolsDir)
-	semgrep.Results = o.enrichResults()
+	semgrep.Results = o.enrichResults(ctx)
 	if err := semgrep.Run(ctx); err != nil {
 		return err
 	}
 
 	o.emitProgress(types.StageSAST, "Bearer", 1.0)
 	bearer := NewBearer(o.cfg.Target, o.cfg.ToolsDir)
-	bearer.Results = o.enrichResults()
+	bearer.Results = o.enrichResults(ctx)
 	return bearer.Run(ctx)
 }
 
 func (o *Orchestrator) runSecrets(ctx context.Context, scanID int64) error {
 	o.emitProgress(types.StageSecrets, "TruffleHog", 0)
 	trufflehog := NewTruffleHog(o.cfg.Target, o.cfg.ToolsDir)
-	trufflehog.Results = o.enrichResults()
+	trufflehog.Results = o.enrichResults(ctx)
 	return trufflehog.Run(ctx)
 }
 
@@ -288,9 +325,12 @@ func (o *Orchestrator) activeTargets() []string {
 func (o *Orchestrator) sendResult(finding types.Finding) {
 	normalizer.EnrichWithOWASP2025(&finding)
 	if finding.CVE != "" {
-		if score, _ := GetEPSS(finding.CVE); score > 0 {
+		if score, _ := o.epssClient.GetEPSS(finding.CVE); score > 0 {
 			finding.EPSS = score
 		}
+	}
+	if o.webhook != nil && o.webhook.ShouldSend(finding) {
+		go o.webhook.Send(finding)
 	}
 	select {
 	case o.results <- finding:
@@ -298,11 +338,19 @@ func (o *Orchestrator) sendResult(finding types.Finding) {
 	}
 }
 
-func (o *Orchestrator) enrichResults() chan<- types.Finding {
+func (o *Orchestrator) enrichResults(ctx context.Context) chan types.Finding {
 	ch := make(chan types.Finding, 1000)
 	go func() {
-		for f := range ch {
-			o.sendResult(f)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case f, ok := <-ch:
+				if !ok {
+					return
+				}
+				o.sendResult(f)
+			}
 		}
 	}()
 	return ch

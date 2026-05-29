@@ -27,7 +27,7 @@ type ZAP struct {
 	Port     int
 	APIKey   string
 	ToolsDir string
-	Results  chan<- types.Finding
+	Results  chan types.Finding
 	cmd      *exec.Cmd
 }
 
@@ -48,6 +48,11 @@ func NewZAP(target string, toolsDir string) *ZAP {
 }
 
 func (z *ZAP) Run(ctx context.Context) error {
+	defer func() {
+		if z.Results != nil {
+			close(z.Results)
+		}
+	}()
 	zapNames := []string{"zap.sh", "zap"}
 	if runtime.GOOS == "windows" {
 		zapNames = []string{"zap.bat", "zap.cmd", "zap.bat", "zap"}

@@ -16,31 +16,55 @@ import (
 )
 
 type FFUF struct {
-	Target   string
-	ToolsDir string
-	Results  chan<- types.Finding
-	Wordlist string
+	Target    string
+	ToolsDir  string
+	Results   chan types.Finding
+	Wordlist  string
+	Extension string
 }
 
 func NewFFUF(target string, toolsDir string) *FFUF {
 	return &FFUF{
 		Target:   target,
 		ToolsDir: toolsDir,
-		Wordlist: filepath.Join(toolsDir, "wordlists", "params.txt"),
 	}
 }
 
-func (f *FFUF) Run(ctx context.Context) error {
-	ffufPath := findTool("ffuf", filepath.Join(f.ToolsDir, "ffuf"))
-	wordlist := f.Wordlist
-	if _, err := os.Stat(wordlist); os.IsNotExist(err) {
-		wordlist = "/usr/share/wordlists/dirb/common.txt"
+func (f *FFUF) wordlistPath() string {
+	if f.Wordlist != "" {
+		if _, err := os.Stat(f.Wordlist); err == nil {
+			return f.Wordlist
+		}
 	}
+	candidates := []string{
+		filepath.Join(f.ToolsDir, "wordlists", "common.txt"),
+		"/usr/share/wordlists/dirb/common.txt",
+		"/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
+		"/usr/local/share/wordlists/dirb/common.txt",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "common.txt"
+}
+
+func (f *FFUF) Run(ctx context.Context) error {
+	defer func() {
+		if f.Results != nil {
+			close(f.Results)
+		}
+	}()
+	ffufPath := findTool("ffuf", filepath.Join(f.ToolsDir, "ffuf"))
 
 	args := []string{
 		"-u", fmt.Sprintf("%s/FUZZ", strings.TrimRight(f.Target, "/")),
-		"-w", wordlist,
+		"-w", f.wordlistPath(),
 		"-json",
+	}
+	if f.Extension != "" {
+		args = append(args, "-e", f.Extension)
 	}
 
 	cmd := exec.CommandContext(ctx, ffufPath, args...)

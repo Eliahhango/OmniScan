@@ -11,7 +11,7 @@ import (
 type OpenVAS struct {
 	Target   string
 	ToolsDir string
-	Results  chan<- types.Finding
+	Results  chan types.Finding
 }
 
 func NewOpenVAS(target string, toolsDir string) *OpenVAS {

@@ -11,6 +11,7 @@ import (
 type Subfinder struct {
 	Target    string
 	RateLimit int
+	Cache     *ResultCache
 }
 
 func NewSubfinder(target string) *Subfinder {
@@ -21,6 +22,14 @@ func (s *Subfinder) Run(ctx context.Context) ([]string, error) {
 	if err := ValidateTarget(s.Target); err != nil {
 		return nil, err
 	}
+
+	cacheKey := "subfinder:" + s.Target
+	if s.Cache != nil {
+		if cached, ok := s.Cache.Get(cacheKey); ok {
+			return cached, nil
+		}
+	}
+
 	args := []string{"-d", s.Target, "-silent"}
 	if s.RateLimit > 0 {
 		args = append(args, "-rl", fmt.Sprintf("%d", s.RateLimit))
@@ -38,6 +47,10 @@ func (s *Subfinder) Run(ctx context.Context) ([]string, error) {
 		if line != "" {
 			subdomains = append(subdomains, line)
 		}
+	}
+
+	if s.Cache != nil {
+		s.Cache.Set(cacheKey, subdomains)
 	}
 	return subdomains, nil
 }

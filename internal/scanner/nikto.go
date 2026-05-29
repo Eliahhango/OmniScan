@@ -16,7 +16,7 @@ import (
 type Nikto struct {
 	Target   string
 	ToolsDir string
-	Results  chan<- types.Finding
+	Results  chan types.Finding
 }
 
 func NewNikto(target string, toolsDir string) *Nikto {
@@ -24,6 +24,11 @@ func NewNikto(target string, toolsDir string) *Nikto {
 }
 
 func (n *Nikto) Run(ctx context.Context) error {
+	defer func() {
+		if n.Results != nil {
+			close(n.Results)
+		}
+	}()
 	niktoPath := findTool("nikto", filepath.Join(n.ToolsDir, "nikto"))
 	args := []string{"-h", n.Target, "-Format", "json", "-o", "-"}
 

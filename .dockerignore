@@ -1,0 +1,8 @@
+.git
+.gitignore
+*.md
+install.sh
+install.ps1
+reports/
+test/
+*.test

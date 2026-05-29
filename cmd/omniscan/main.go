@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/Eliahhango/OmniScan/internal/config"
+	"github.com/Eliahhango/OmniScan/internal/daemon"
 	"github.com/Eliahhango/OmniScan/internal/db"
 	"github.com/Eliahhango/OmniScan/internal/scanner"
 	"github.com/Eliahhango/OmniScan/internal/tui"
@@ -19,20 +22,27 @@ func main() {
 		fmt.Println("OmniScan - Unified Vulnerability Hunting Platform")
 		fmt.Println()
 		fmt.Println("Usage:")
-		fmt.Println("  omniscan tui                    Launch interactive TUI")
-		fmt.Println("  omniscan scan <target>          Run scan")
-		fmt.Println("  omniscan setup                  Install all 13 tools")
-		fmt.Println("  omniscan bounty <target>        Bug bounty mode")
+		fmt.Println("  omniscan tui                      Launch interactive TUI")
+		fmt.Println("  omniscan scan [flags] <target>    Run scan")
+		fmt.Println("  omniscan diff <id1> <id2>         Compare two scans")
+		fmt.Println("  omniscan daemon [--listen :8080]  Start daemon server")
+		fmt.Println("  omniscan setup                    Install all 13 tools")
+		fmt.Println("  omniscan bounty <target>          Bug bounty mode")
 		fmt.Println()
 		fmt.Println("Flags:")
-		fmt.Println("  -t <target>     Scan target (domain or IP)")
-		fmt.Println("  -program        Bug bounty program name")
-		fmt.Println("  -resume         Resume from last checkpoint")
-		fmt.Println("  -config <path>  Config file path")
+		fmt.Println("  -t <target>         Scan target (domain or IP)")
+		fmt.Println("  -program            Bug bounty program name")
+		fmt.Println("  -resume             Resume from last checkpoint")
+		fmt.Println("  -config <path>      Config file path")
+		fmt.Println("  -json               Output findings as JSON lines")
+		fmt.Println("  -exit-on-severity   Exit non-zero if any finding >= severity (critical|high|medium|low)")
 		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Println("  omniscan tui")
 		fmt.Println("  omniscan scan -t example.com")
+		fmt.Println("  omniscan scan --json --exit-on-severity=high -t example.com")
+		fmt.Println("  omniscan diff 1 2")
+		fmt.Println("  omniscan daemon --listen :9090")
 		fmt.Println("  omniscan bounty -t example.com -program hackerone")
 		fmt.Println("  omniscan setup")
 		return
@@ -46,6 +56,10 @@ func main() {
 		runTUI(configPath)
 	case "scan":
 		runScan(configPath)
+	case "diff":
+		runDiff()
+	case "daemon":
+		runDaemon(configPath)
 	case "setup":
 		runSetup()
 	case "bounty":
@@ -76,7 +90,7 @@ func runTUI(configPath string) {
 		cfg = config.Defaults()
 	}
 
-	store, err := db.New(cfg.DBPath)
+	store, err := db.New(cfg.DBPath, cfg.Passphrase)
 	if err == nil {
 		defer store.Close()
 		orchCfg := &scanner.OrchestratorConfig{
@@ -85,6 +99,7 @@ func runTUI(configPath string) {
 			RateLimit:   cfg.RateLimit,
 			OutputDir:   cfg.OutputDir,
 			ToolsDir:    cfg.ToolsDir,
+			DBPath:      cfg.DBPath,
 		}
 		orch := scanner.NewOrchestrator(orchCfg, store)
 		app.SetOrchestrator(orch)
@@ -102,6 +117,9 @@ func runTUI(configPath string) {
 func runScan(configPath string) {
 	target := ""
 	resume := false
+	jsonOutput := false
+	exitOnSeverity := types.Severity("")
+
 	for i, arg := range os.Args {
 		switch arg {
 		case "-t":
@@ -110,10 +128,21 @@ func runScan(configPath string) {
 			}
 		case "-resume":
 			resume = true
+		case "-json":
+			jsonOutput = true
+		case "-exit-on-severity":
+			if i+1 < len(os.Args) {
+				exitOnSeverity = types.Severity(os.Args[i+1])
+			}
 		}
 	}
 	if target == "" && len(os.Args) > 2 {
-		target = os.Args[2]
+		for _, a := range os.Args[2:] {
+			if !isFlag(a) {
+				target = a
+				break
+			}
+		}
 	}
 	if target == "" {
 		fmt.Println("Error: target required. Usage: omniscan scan -t <target>")
@@ -126,7 +155,7 @@ func runScan(configPath string) {
 		cfg = config.Defaults()
 	}
 
-	store, err := db.New(cfg.DBPath)
+	store, err := db.New(cfg.DBPath, cfg.Passphrase)
 	if err != nil {
 		fmt.Printf("Error opening database: %v\n", err)
 		os.Exit(1)
@@ -140,6 +169,7 @@ func runScan(configPath string) {
 		OutputDir:   cfg.OutputDir,
 		ToolsDir:    cfg.ToolsDir,
 		Resume:      resume,
+		DBPath:      cfg.DBPath,
 	}
 
 	orch := scanner.NewOrchestrator(orchCfg, store)
@@ -147,28 +177,178 @@ func runScan(configPath string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 
-	fmt.Printf("Starting scan on %s...\n", target)
+	if !jsonOutput {
+		fmt.Printf("Starting scan on %s...\n", target)
+	}
 	start := time.Now()
+
+	var highestSeverity types.Severity
+	var mu sync.Mutex
 
 	go func() {
 		for finding := range orch.Results() {
-			fmt.Printf("[%s] %s - %s (%s)\n", finding.Severity, finding.Title, finding.AffectedURL, finding.ToolSource)
+			mu.Lock()
+			if severityRank[finding.Severity] > severityRank[highestSeverity] {
+				highestSeverity = finding.Severity
+			}
+			mu.Unlock()
+
+			if jsonOutput {
+				line, _ := json.Marshal(finding)
+				fmt.Println(string(line))
+			} else {
+				fmt.Printf("[%s] %s - %s (%s)\n", finding.Severity, finding.Title, finding.AffectedURL, finding.ToolSource)
+			}
 		}
 	}()
 
 	go func() {
 		for err := range orch.Errors() {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			if jsonOutput {
+				line, _ := json.Marshal(map[string]string{"error": err.Error()})
+				fmt.Fprintln(os.Stderr, string(line))
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
 		}
 	}()
 
 	if err := orch.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Scan failed: %v\n", err)
+		if jsonOutput {
+			line, _ := json.Marshal(map[string]string{"error": err.Error()})
+			fmt.Fprintln(os.Stderr, string(line))
+		} else {
+			fmt.Fprintf(os.Stderr, "Scan failed: %v\n", err)
+		}
 		os.Exit(1)
 	}
 
 	duration := time.Since(start)
-	fmt.Printf("\nScan completed in %s\n", duration)
+	if !jsonOutput {
+		fmt.Printf("\nScan completed in %s\n", duration)
+	}
+
+	if exitOnSeverity != "" && severityRank[highestSeverity] >= severityRank[exitOnSeverity] {
+		os.Exit(1)
+	}
+}
+
+var severityRank = map[types.Severity]int{
+	types.SeverityCritical: 4,
+	types.SeverityHigh:     3,
+	types.SeverityMedium:   2,
+	types.SeverityLow:      1,
+	types.SeverityInfo:     0,
+	"":                     0,
+}
+
+func isFlag(s string) bool {
+	return len(s) > 0 && s[0] == '-'
+}
+
+func runDiff() {
+	if len(os.Args) < 4 {
+		fmt.Println("Usage: omniscan diff <scan_id_1> <scan_id_2>")
+		os.Exit(1)
+	}
+	var id1, id2 int64
+	fmt.Sscanf(os.Args[2], "%d", &id1)
+	fmt.Sscanf(os.Args[3], "%d", &id2)
+	if id1 == 0 || id2 == 0 {
+		fmt.Println("Invalid scan IDs")
+		os.Exit(1)
+	}
+
+	cfg, err := config.Load("omniscan.yaml")
+	if err != nil {
+		cfg = config.Defaults()
+	}
+	store, err := db.New(cfg.DBPath, cfg.Passphrase)
+	if err != nil {
+		fmt.Printf("Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	s1, _ := store.GetScan(id1)
+	s2, _ := store.GetScan(id2)
+
+	f1, _ := store.GetFindings(id1)
+	f2, _ := store.GetFindings(id2)
+
+	f1set := make(map[string]bool, len(f1))
+	for _, f := range f1 {
+		f1set[f.ID] = true
+	}
+	f2set := make(map[string]bool, len(f2))
+	for _, f := range f2 {
+		f2set[f.ID] = true
+	}
+
+	var added, fixed []types.Finding
+	for _, f := range f2 {
+		if !f1set[f.ID] {
+			added = append(added, f)
+		}
+	}
+	for _, f := range f1 {
+		if !f2set[f.ID] {
+			fixed = append(fixed, f)
+		}
+	}
+
+	fmt.Printf("Scan %d vs Scan %d\n", id1, id2)
+	if s1 != nil {
+		fmt.Printf("  Scan %d: %s (%s, %d findings)\n", id1, s1.Target, s1.Status, len(f1))
+	}
+	if s2 != nil {
+		fmt.Printf("  Scan %d: %s (%s, %d findings)\n", id2, s2.Target, s2.Status, len(f2))
+	}
+
+	fmt.Printf("\nNew findings: %d\n", len(added))
+	for _, f := range added {
+		fmt.Printf("  [+] [%s] %s - %s (%s)\n", f.Severity, f.Title, f.AffectedURL, f.ToolSource)
+	}
+
+	fmt.Printf("\nFixed findings: %d\n", len(fixed))
+	for _, f := range fixed {
+		fmt.Printf("  [-] [%s] %s - %s (%s)\n", f.Severity, f.Title, f.AffectedURL, f.ToolSource)
+	}
+
+	if len(added) == 0 && len(fixed) == 0 {
+		fmt.Println("\nNo changes between scans.")
+	}
+}
+
+func runDaemon(configPath string) {
+	listen := ":9090"
+	for i, arg := range os.Args {
+		if arg == "--listen" && i+1 < len(os.Args) {
+			listen = os.Args[i+1]
+		}
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		cfg = config.Defaults()
+	}
+	if cfg.Daemon.Listen != "" {
+		listen = cfg.Daemon.Listen
+	}
+
+	store, err := db.New(cfg.DBPath, cfg.Passphrase)
+	if err != nil {
+		fmt.Printf("Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	srv := daemon.New(nil, store, listen)
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Daemon error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func runSetup() {
@@ -233,7 +413,7 @@ func runBounty(configPath string) {
 		cfg = config.Defaults()
 	}
 
-	store, err := db.New(cfg.DBPath)
+	store, err := db.New(cfg.DBPath, cfg.Passphrase)
 	if err != nil {
 		fmt.Printf("Error opening database: %v\n", err)
 		os.Exit(1)
@@ -246,6 +426,7 @@ func runBounty(configPath string) {
 		RateLimit:   cfg.RateLimit,
 		OutputDir:   cfg.OutputDir,
 		ToolsDir:    cfg.ToolsDir,
+		DBPath:      cfg.DBPath,
 	}
 
 	orch := scanner.NewOrchestrator(orchCfg, store)

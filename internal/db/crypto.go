@@ -10,9 +10,34 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/crypto/argon2"
 )
 
-const keyFile = "omniscan.key"
+const (
+	keyFile     = "omniscan.key"
+	saltFile    = "omniscan.salt"
+	argonTime   = 3
+	argonMemory = 64 * 1024
+	argonThreads = 4
+	argonKeyLen  = 32
+)
+
+func deriveKey(passphrase string, dbPath string) ([]byte, error) {
+	saltPath := filepath.Join(filepath.Dir(dbPath), saltFile)
+	salt, err := os.ReadFile(saltPath)
+	if err != nil {
+		salt = make([]byte, 16)
+		if _, err := rand.Read(salt); err != nil {
+			return nil, fmt.Errorf("generate salt: %w", err)
+		}
+		if err := os.WriteFile(saltPath, salt, 0600); err != nil {
+			return nil, fmt.Errorf("save salt: %w", err)
+		}
+	}
+	key := argon2.IDKey([]byte(passphrase), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	return key, nil
+}
 
 func loadOrCreateKey(dbPath string) ([]byte, error) {
 	keyPath := keyPathForDB(dbPath)

@@ -72,6 +72,13 @@ const htmlTemplate = `<!DOCTYPE html>
   .toggle-icon { color: #8b949e; transition: transform 0.2s; font-size: 0.8em; margin-left: 12px; }
   .finding-header.open .toggle-icon { transform: rotate(90deg); }
 
+  /* OWASP chart */
+  .owasp-grid { margin-top: 10px; }
+  .owasp-bar-row { display: flex; align-items: center; margin-bottom: 6px; }
+  .owasp-label { width: 260px; font-size: 0.82em; color: #c9d1d9; text-align: right; padding-right: 12px; flex-shrink: 0; }
+  .owasp-bar-bg { flex: 1; height: 22px; background: #21262d; border-radius: 4px; overflow: hidden; }
+  .owasp-bar { height: 100%; background: #1f6feb; border-radius: 4px; font-size: 0.75em; color: #fff; line-height: 22px; padding-left: 8px; min-width: 20px; }
+
   /* CVSS indicator */
   .cvss-pill { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; }
   .cvss-high { background: #da363333; color: #f85149; border: 1px solid #da3633; }
@@ -168,6 +175,16 @@ const htmlTemplate = `<!DOCTYPE html>
   <div class="chart-bar-row" data-count="{{.SeverityBreakdown.Medium}}" data-total="{{.TotalVulns}}"><div class="chart-label">Medium</div><div class="chart-bar-bg"><div class="chart-bar bar-medium" style="width: 0%;">{{.SeverityBreakdown.Medium}}</div></div></div>
   <div class="chart-bar-row" data-count="{{.SeverityBreakdown.Low}}" data-total="{{.TotalVulns}}"><div class="chart-label">Low</div><div class="chart-bar-bg"><div class="chart-bar bar-low" style="width: 0%;">{{.SeverityBreakdown.Low}}</div></div></div>
   <div class="chart-bar-row" data-count="{{.SeverityBreakdown.Info}}" data-total="{{.TotalVulns}}"><div class="chart-label">Info</div><div class="chart-bar-bg"><div class="chart-bar bar-info" style="width: 0%;">{{.SeverityBreakdown.Info}}</div></div></div>
+</div>
+
+<div class="chart-container">
+  <h3 style="color: #f0f6fc; font-size: 1em; margin-bottom: 15px;">OWASP Top 10:2025 Coverage</h3>
+  <div class="owasp-grid">
+    {{$total := .TotalVulns}}{{$owasp := .OWASPCounts}}
+    {{range $cat := owaspCategories}}{{$count := index $owasp $cat}}
+    <div class="owasp-bar-row"><div class="owasp-label">{{$cat}}</div><div class="owasp-bar-bg"><div class="owasp-bar" style="width: {{if gt $count 0}}{{percent $count $total}}{{else}}0%{{end}};">{{if gt $count 0}}{{$count}}{{end}}</div></div></div>
+    {{end}}
+  </div>
 </div>
 
 <!-- 2. Top Critical Findings -->

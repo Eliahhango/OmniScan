@@ -9,14 +9,14 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-type DNSCache struct {
+type ResultCache struct {
 	mu   sync.RWMutex
 	data map[string][]string
 	db   *sql.DB
 }
 
-func NewDNSCache(dbPath string) (*DNSCache, error) {
-	c := &DNSCache{
+func NewResultCache(dbPath string) (*ResultCache, error) {
+	c := &ResultCache{
 		data: make(map[string][]string),
 	}
 
@@ -37,25 +37,25 @@ func NewDNSCache(dbPath string) (*DNSCache, error) {
 	return c, nil
 }
 
-func (c *DNSCache) migrate() error {
-	_, err := c.db.Exec(`CREATE TABLE IF NOT EXISTS dns_cache (
-		domain TEXT PRIMARY KEY,
+func (c *ResultCache) migrate() error {
+	_, err := c.db.Exec(`CREATE TABLE IF NOT EXISTS result_cache (
+		cache_key TEXT PRIMARY KEY,
 		results TEXT,
 		cached_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	return err
 }
 
-func (c *DNSCache) load() error {
-	rows, err := c.db.Query("SELECT domain, results FROM dns_cache")
+func (c *ResultCache) load() error {
+	rows, err := c.db.Query("SELECT cache_key, results FROM result_cache")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var domain, resultsJSON string
-		if err := rows.Scan(&domain, &resultsJSON); err != nil {
+		var key, resultsJSON string
+		if err := rows.Scan(&key, &resultsJSON); err != nil {
 			return err
 		}
 		var results []string
@@ -63,34 +63,34 @@ func (c *DNSCache) load() error {
 			continue
 		}
 		c.mu.Lock()
-		c.data[domain] = results
+		c.data[key] = results
 		c.mu.Unlock()
 	}
 	return nil
 }
 
-func (c *DNSCache) Get(domain string) ([]string, bool) {
+func (c *ResultCache) Get(key string) ([]string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	results, ok := c.data[domain]
+	results, ok := c.data[key]
 	return results, ok
 }
 
-func (c *DNSCache) Set(domain string, results []string) {
+func (c *ResultCache) Set(key string, results []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.data[domain] = results
+	c.data[key] = results
 
 	if c.db != nil {
 		resultsJSON, _ := json.Marshal(results)
 		c.db.Exec(
-			"INSERT OR REPLACE INTO dns_cache (domain, results, cached_at) VALUES (?, ?, ?)",
-			domain, string(resultsJSON), time.Now(),
+			"INSERT OR REPLACE INTO result_cache (cache_key, results, cached_at) VALUES (?, ?, ?)",
+			key, string(resultsJSON), time.Now(),
 		)
 	}
 }
 
-func (c *DNSCache) Close() error {
+func (c *ResultCache) Close() error {
 	if c.db != nil {
 		return c.db.Close()
 	}

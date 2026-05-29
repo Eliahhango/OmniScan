@@ -14,7 +14,7 @@ import (
 type BearerScanner struct {
 	Target   string
 	ToolsDir string
-	Results  chan<- types.Finding
+	Results  chan types.Finding
 }
 
 func NewBearer(target string, toolsDir string) *BearerScanner {
@@ -22,6 +22,11 @@ func NewBearer(target string, toolsDir string) *BearerScanner {
 }
 
 func (b *BearerScanner) Run(ctx context.Context) error {
+	defer func() {
+		if b.Results != nil {
+			close(b.Results)
+		}
+	}()
 	bearerPath := findTool("bearer", filepath.Join(b.ToolsDir, "bearer"))
 
 	cmd := exec.CommandContext(ctx, bearerPath, "scan", b.Target, "--json")

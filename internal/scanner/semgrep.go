@@ -14,7 +14,7 @@ import (
 type Semgrep struct {
 	Target   string
 	ToolsDir string
-	Results  chan<- types.Finding
+	Results  chan types.Finding
 }
 
 func NewSemgrep(target string, toolsDir string) *Semgrep {
@@ -22,6 +22,11 @@ func NewSemgrep(target string, toolsDir string) *Semgrep {
 }
 
 func (s *Semgrep) Run(ctx context.Context) error {
+	defer func() {
+		if s.Results != nil {
+			close(s.Results)
+		}
+	}()
 	semgrepPath := findTool("semgrep", filepath.Join(s.ToolsDir, "semgrep"))
 	args := []string{"--json", "-c", "p/owasp-top-ten", s.Target}
 

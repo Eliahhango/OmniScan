@@ -8,12 +8,15 @@ import (
 )
 
 type Config struct {
-	DBPath      string   `yaml:"db_path"`
-	OutputDir   string   `yaml:"output_dir"`
-	TemplateDir string   `yaml:"template_dir"`
-	ToolsDir    string   `yaml:"tools_dir"`
-	Concurrency int      `yaml:"concurrency"`
-	RateLimit   int      `yaml:"rate_limit"`
+	DBPath      string     `yaml:"db_path"`
+	Passphrase  string     `yaml:"passphrase"`
+	OutputDir   string     `yaml:"output_dir"`
+	TemplateDir string     `yaml:"template_dir"`
+	ToolsDir    string     `yaml:"tools_dir"`
+	Concurrency int        `yaml:"concurrency"`
+	RateLimit   int        `yaml:"rate_limit"`
+	Webhook     WebhookConfig `yaml:"webhook"`
+	Daemon      DaemonConfig  `yaml:"daemon"`
 	Nuclei      ToolConfig `yaml:"nuclei"`
 	ZAP         ToolConfig `yaml:"zap"`
 	Nmap        ToolConfig `yaml:"nmap"`
@@ -21,6 +24,15 @@ type Config struct {
 	Nikto       ToolConfig `yaml:"nikto"`
 	Semgrep     ToolConfig `yaml:"semgrep"`
 	FFUF        ToolConfig `yaml:"ffuf"`
+}
+
+type WebhookConfig struct {
+	URLs        []string       `yaml:"urls"`
+	MinSeverity types.Severity `yaml:"min_severity"`
+}
+
+type DaemonConfig struct {
+	Listen string `yaml:"listen"`
 }
 
 type ToolConfig struct {
@@ -49,6 +61,8 @@ func Defaults() *Config {
 		ToolsDir:    "tools",
 		Concurrency: 5,
 		RateLimit:   150,
+		Webhook:     WebhookConfig{MinSeverity: types.SeverityCritical},
+		Daemon:      DaemonConfig{Listen: ":9090"},
 		Nuclei:      ToolConfig{Path: "nuclei", Enabled: true, Timeout: 1800},
 		ZAP:         ToolConfig{Path: "zap", Enabled: true, Timeout: 3600},
 		Nmap:        ToolConfig{Path: "nmap", Enabled: true, Timeout: 1800},

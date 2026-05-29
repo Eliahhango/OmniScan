@@ -91,27 +91,35 @@ func mergeFindings(existing, finding *types.Finding) *types.Finding {
 	return &merged
 }
 
+func copyFinding(f *types.Finding) *types.Finding {
+	c := *f
+	c.CWE = append([]string{}, f.CWE...)
+	c.BountyPlatforms = append([]string{}, f.BountyPlatforms...)
+	return &c
+}
+
 func (d *DedupEngine) Add(finding *types.Finding) *types.Finding {
+	c := copyFinding(finding)
 	for _, existing := range d.seen {
-		if existing.ID == finding.ID {
+		if existing.ID == c.ID {
 			return existing
 		}
 	}
 
-	key1 := fmt.Sprintf("url+cve:%s|%s", finding.AffectedURL, finding.CVE)
-	cweStr := strings.Join(finding.CWE, ",")
-	key2 := fmt.Sprintf("url+cwe+param:%s|%s|%s", finding.AffectedURL, cweStr, finding.AffectedParam)
-	key3 := fmt.Sprintf("cve:%s", finding.CVE)
+	key1 := fmt.Sprintf("url+cve:%s|%s", c.AffectedURL, c.CVE)
+	cweStr := strings.Join(c.CWE, ",")
+	key2 := fmt.Sprintf("url+cwe+param:%s|%s|%s", c.AffectedURL, cweStr, c.AffectedParam)
+	key3 := fmt.Sprintf("cve:%s", c.CVE)
 
 	for _, existing := range d.seen {
-		matchedURL := existing.AffectedURL == finding.AffectedURL
-		matchedCVE := existing.CVE != "" && existing.CVE == finding.CVE
-		matchedCWEParam := len(existing.CWE) > 0 && len(finding.CWE) > 0 &&
-			existing.CWE[0] == finding.CWE[0] &&
-			existing.AffectedParam == finding.AffectedParam
+		matchedURL := existing.AffectedURL == c.AffectedURL
+		matchedCVE := existing.CVE != "" && existing.CVE == c.CVE
+		matchedCWEParam := len(existing.CWE) > 0 && len(c.CWE) > 0 &&
+			existing.CWE[0] == c.CWE[0] &&
+			existing.AffectedParam == c.AffectedParam
 
 		if (matchedURL && matchedCVE) || (matchedURL && matchedCWEParam) || matchedCVE {
-			merged := mergeFindings(existing, finding)
+			merged := mergeFindings(existing, c)
 			d.seen[key1] = merged
 			d.seen[key2] = merged
 			if merged.CVE != "" {
@@ -121,12 +129,12 @@ func (d *DedupEngine) Add(finding *types.Finding) *types.Finding {
 		}
 	}
 
-	d.seen[key1] = finding
-	d.seen[key2] = finding
-	if finding.CVE != "" {
-		d.seen[key3] = finding
+	d.seen[key1] = c
+	d.seen[key2] = c
+	if c.CVE != "" {
+		d.seen[key3] = c
 	}
-	return finding
+	return c
 }
 
 func (d *DedupEngine) GetAll() []types.Finding {

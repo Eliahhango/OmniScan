@@ -11,6 +11,7 @@ import (
 type Katana struct {
 	Targets   []string
 	RateLimit int
+	Cache     *ResultCache
 }
 
 func NewKatana(targets []string) *Katana {
@@ -21,6 +22,14 @@ func (k *Katana) Run(ctx context.Context) ([]string, error) {
 	if len(k.Targets) == 0 {
 		return nil, nil
 	}
+
+	cacheKey := "katana:" + strings.Join(k.Targets, ",")
+	if k.Cache != nil {
+		if cached, ok := k.Cache.Get(cacheKey); ok {
+			return cached, nil
+		}
+	}
+
 	args := []string{"-silent"}
 	if k.RateLimit > 0 {
 		args = append(args, "-rl", fmt.Sprintf("%d", k.RateLimit))
@@ -41,11 +50,16 @@ func (k *Katana) Run(ctx context.Context) ([]string, error) {
 			urls = append(urls, line)
 		}
 	}
+
+	if k.Cache != nil {
+		k.Cache.Set(cacheKey, urls)
+	}
 	return urls, nil
 }
 
 type GAU struct {
 	Target string
+	Cache  *ResultCache
 }
 
 func NewGAU(target string) *GAU {
@@ -56,6 +70,14 @@ func (g *GAU) Run(ctx context.Context) ([]string, error) {
 	if err := ValidateTarget(g.Target); err != nil {
 		return nil, err
 	}
+
+	cacheKey := "gau:" + g.Target
+	if g.Cache != nil {
+		if cached, ok := g.Cache.Get(cacheKey); ok {
+			return cached, nil
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "gau", g.Target)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -69,6 +91,10 @@ func (g *GAU) Run(ctx context.Context) ([]string, error) {
 		if line != "" {
 			urls = append(urls, line)
 		}
+	}
+
+	if g.Cache != nil {
+		g.Cache.Set(cacheKey, urls)
 	}
 	return urls, nil
 }

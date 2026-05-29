@@ -16,19 +16,17 @@ import (
 )
 
 type Nuclei struct {
-	Target     string
-	RateLimit  int
-	ToolsDir   string
-	Results    chan<- types.Finding
-	TemplateDir string
+	Target    string
+	RateLimit int
+	ToolsDir  string
+	Results   chan types.Finding
 }
 
 func NewNuclei(target string, rateLimit int, toolsDir string) *Nuclei {
 	return &Nuclei{
-		Target:      target,
-		RateLimit:   rateLimit,
-		ToolsDir:    toolsDir,
-		TemplateDir: "templates/",
+		Target:    target,
+		RateLimit: rateLimit,
+		ToolsDir:  toolsDir,
 	}
 }
 
@@ -44,7 +42,6 @@ func (n *Nuclei) Run(ctx context.Context) error {
 
 	args := []string{
 		"-l", targetsFile,
-		"-t", n.TemplateDir,
 		"-severity", "critical,high,medium,low",
 		"-rate-limit", fmt.Sprintf("%d", n.RateLimit),
 		"-bulk-size", "25",
@@ -54,6 +51,11 @@ func (n *Nuclei) Run(ctx context.Context) error {
 		"-hm",
 	}
 
+	defer func() {
+		if n.Results != nil {
+			close(n.Results)
+		}
+	}()
 	nucleiPath := findTool("nuclei", filepath.Join(n.ToolsDir, "nuclei"))
 	cmd := exec.CommandContext(ctx, nucleiPath, args...)
 

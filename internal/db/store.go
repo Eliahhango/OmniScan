@@ -16,12 +16,17 @@ type Store struct {
 	key []byte
 }
 
-func New(path string) (*Store, error) {
+func New(path string, passphrase string) (*Store, error) {
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	key, err := loadOrCreateKey(path)
+	var key []byte
+	if passphrase != "" {
+		key, err = deriveKey(passphrase, path)
+	} else {
+		key, err = loadOrCreateKey(path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load encryption key: %w", err)
 	}
@@ -231,6 +236,48 @@ func (s *Store) UpdateScanStatus(scanID int64, status string) error {
 		status, time.Now(), scanID,
 	)
 	return err
+}
+
+type ScanRecord struct {
+	ID        int64     `json:"id"`
+	Target    string    `json:"target"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	Findings  int       `json:"findings,omitempty"`
+}
+
+func (s *Store) ListScans() ([]ScanRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT s.id, s.target, s.status, s.created_at,
+			(SELECT COUNT(*) FROM findings f WHERE f.scan_id = s.id) as findings_count
+		FROM scans s ORDER BY s.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []ScanRecord
+	for rows.Next() {
+		var r ScanRecord
+		if err := rows.Scan(&r.ID, &r.Target, &r.Status, &r.CreatedAt, &r.Findings); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, nil
+}
+
+func (s *Store) GetScan(scanID int64) (*ScanRecord, error) {
+	var r ScanRecord
+	err := s.db.QueryRow(`
+		SELECT s.id, s.target, s.status, s.created_at,
+			(SELECT COUNT(*) FROM findings f WHERE f.scan_id = s.id) as findings_count
+		FROM scans s WHERE s.id = ?`, scanID,
+	).Scan(&r.ID, &r.Target, &r.Status, &r.CreatedAt, &r.Findings)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 func joinStrings(s []string) string {

@@ -30,8 +30,8 @@ func TestDedupSameURLAndCVE(t *testing.T) {
 	}
 
 	result1 := engine.Add(f1)
-	if result1 != f1 {
-		t.Error("first add should return the original finding")
+	if result1.ID != f1.ID {
+		t.Error("first add should return a finding with the same ID")
 	}
 
 	result2 := engine.Add(f2)
@@ -70,8 +70,8 @@ func TestDedupSameURLAndCWEParam(t *testing.T) {
 	}
 
 	result1 := engine.Add(f1)
-	if result1 != f1 {
-		t.Error("first add should return the original finding")
+	if result1.ID != f1.ID {
+		t.Error("first add should return a finding with the same ID")
 	}
 
 	result2 := engine.Add(f2)

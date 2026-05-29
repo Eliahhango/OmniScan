@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OmniScan Live Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+h1 { color: #58a6ff; margin-bottom: 20px; }
+.stats { display: flex; gap: 16px; margin-bottom: 20px; }
+.stat { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px 24px; text-align: center; flex: 1; }
+.stat .num { font-size: 28px; font-weight: 600; color: #f0f6fc; }
+.stat .lbl { font-size: 12px; color: #8b949e; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; background: #161b22; border: 1px solid #30363d; border-radius: 6px; }
+th { background: #21262d; padding: 10px 12px; text-align: left; font-size: 12px; text-transform: uppercase; color: #8b949e; border-bottom: 1px solid #30363d; }
+td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 14px; }
+.critical { color: #f85149; }
+.high { color: #d29922; }
+.medium { color: #58a6ff; }
+.low { color: #8b949e; }
+.info { color: #484f58; }
+.status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+.status.critical { background: rgba(248,81,73,0.15); color: #f85149; }
+.status.high { background: rgba(210,153,34,0.15); color: #d29922; }
+.status.medium { background: rgba(88,166,255,0.15); color: #58a6ff; }
+.status.low { background: rgba(139,148,158,0.15); color: #8b949e; }
+.connected { color: #3fb950; }
+.disconnected { color: #f85149; }
+</style>
+</head>
+<body>
+<h1>OmniScan Live Dashboard <span id="status" class="disconnected">● disconnected</span></h1>
+<div class="stats">
+  <div class="stat"><div class="num" id="count-critical">0</div><div class="lbl">Critical</div></div>
+  <div class="stat"><div class="num" id="count-high">0</div><div class="lbl">High</div></div>
+  <div class="stat"><div class="num" id="count-medium">0</div><div class="lbl">Medium</div></div>
+  <div class="stat"><div class="num" id="count-low">0</div><div class="lbl">Low</div></div>
+  <div class="stat"><div class="num" id="count-total">0</div><div class="lbl">Total</div></div>
+</div>
+<table>
+<thead><tr><th>Severity</th><th>Title</th><th>URL</th><th>Tool</th><th>CVE</th><th>Time</th></tr></thead>
+<tbody id="findings"></tbody>
+</table>
+<script>
+const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(scheme + '//' + location.host + '/ws');
+const statusEl = document.getElementById('status');
+const tbody = document.getElementById('findings');
+
+let counts = { critical: 0, high: 0, medium: 0, low: 0, total: 0 };
+
+ws.onopen = () => { statusEl.className = 'connected'; statusEl.textContent = '● connected'; };
+ws.onclose = () => { statusEl.className = 'disconnected'; statusEl.textContent = '● disconnected'; };
+ws.onmessage = (e) => {
+  const f = JSON.parse(e.data);
+  counts.total++;
+  counts[f.Severity.toLowerCase()] = (counts[f.Severity.toLowerCase()] || 0) + 1;
+  updateCounts();
+  const row = tbody.insertRow(0);
+  row.innerHTML = `<td><span class="status ${f.Severity.toLowerCase()}">${f.Severity}</span></td>
+    <td>${f.Title || ''}</td><td>${f.AffectedURL || ''}</td><td>${f.ToolSource || ''}</td>
+    <td>${f.CVE || ''}</td><td>${f.Timestamp ? new Date(f.Timestamp).toLocaleTimeString() : ''}</td>`;
+};
+function updateCounts() {
+  document.getElementById('count-critical').textContent = counts.critical;
+  document.getElementById('count-high').textContent = counts.high;
+  document.getElementById('count-medium').textContent = counts.medium;
+  document.getElementById('count-low').textContent = counts.low;
+  document.getElementById('count-total').textContent = counts.total;
+}
+</script>
+</body>
+</html>

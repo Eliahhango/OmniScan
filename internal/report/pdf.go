@@ -92,7 +92,6 @@ func GeneratePDFFromHTML(htmlPath string, outputPath string) (string, error) {
 		cmd := exec.Command(ch,
 			"--headless",
 			"--disable-gpu",
-			"--no-sandbox",
 			"--disable-software-rasterizer",
 			"--print-to-pdf="+absPDF,
 			absHTML,

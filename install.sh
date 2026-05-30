@@ -62,10 +62,10 @@ while kill -0 "$pid" 2>/dev/null; do
 done
 wait "$pid"; rc=$?
 if [ $rc -eq 0 ]; then
-    # Symlink so it's in PATH for verification (pipx installs to ~/.local/bin)
-    PIPX_BIN="$(pipx environment 2>/dev/null | grep 'PIPX_BIN_DIR' | cut -d= -f2-)"
-    [ -n "$PIPX_BIN" ] && PIPX_BIN="${PIPX_BIN//\"/}" || PIPX_BIN="$HOME/.local/bin"
-    [ -f "$PIPX_BIN/semgrep" ] && sudo ln -sf "$PIPX_BIN/semgrep" /usr/local/bin/semgrep 2>/dev/null
+    # Symlink semgrep into global PATH (pipx installs to ~/.local/bin which may not be in root's PATH)
+    SEMGREP_BIN="$(find /root/.local/bin /home -name semgrep -type f 2>/dev/null | head -1)"
+    [ -z "$SEMGREP_BIN" ] && SEMGREP_BIN="$HOME/.local/bin/semgrep"
+    [ -f "$SEMGREP_BIN" ] && sudo ln -sf "$SEMGREP_BIN" /usr/local/bin/semgrep 2>/dev/null
     printf "\r  \033[K${GREEN}OK${NC}   semgrep  %s  elapsed:%s\n" "$(fmt_time $((SECONDS - sem_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
 else
     printf "\r  \033[K${YELLOW}WARN${NC}  semgrep  %s  (pipx install semgrep manually)\n" "$(fmt_time $((SECONDS - sem_start)))"
@@ -153,18 +153,23 @@ done
 # ─────────────────── trufflehog (pre-built binary — avoids OOM from compiling 500+ deps) ───────────────────
 printf "  trufflehog  (downloading...)"
 th_start=$SECONDS
-th_url="https://github.com/trufflesecurity/trufflehog/releases/latest/download/trufflehog_linux_amd64.tar.gz"
-curl -sL "$th_url" -o /tmp/th.tar.gz 2>/dev/null
-if [ $? -eq 0 ]; then
-    tar xzf /tmp/th.tar.gz -C /tmp/ 2>/dev/null
-    if [ $? -eq 0 ]; then
-        sudo mv /tmp/trufflehog /usr/local/bin/ 2>/dev/null
-        if command -v trufflehog &>/dev/null; then
+# Get download URL from GitHub API (asset filename includes version, e.g. trufflehog_3.95.3_linux_amd64.tar.gz)
+th_url=$(curl -sL https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest \
+    | grep -o '"browser_download_url": "[^"]*linux_amd64.tar.gz"' | head -1 | cut -d'"' -f4)
+if [ -n "$th_url" ]; then
+    curl -sL "$th_url" -o /tmp/th.tar.gz 2>/dev/null
+    if [ $? -eq 0 ] && tar xzf /tmp/th.tar.gz -C /tmp/ 2>/dev/null; then
+        if sudo mv /tmp/trufflehog /usr/local/bin/ 2>/dev/null && command -v trufflehog &>/dev/null; then
             printf "\r  \033[K${GREEN}OK${NC}  trufflehog  %s  elapsed %s\n" \
                 "$(fmt_time $((SECONDS - th_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
-            COMPLETED=$((COMPLETED + 1))
+        else
+            printf "\r  \033[K${RED}FAIL${NC} trufflehog  (mv or PATH issue)\n"
         fi
+    else
+        printf "\r  \033[K${RED}FAIL${NC} trufflehog  (download or extract failed)\n"
     fi
+else
+    printf "\r  \033[K${RED}FAIL${NC} trufflehog  (could not fetch release URL from GitHub API)\n"
 fi
 rm -f /tmp/th.tar.gz /tmp/trufflehog
 

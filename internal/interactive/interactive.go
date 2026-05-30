@@ -166,10 +166,18 @@ func printBanner() {
   / _ \   _ __ ___    _ __   (_) / ___|    ___    __ _   _ __
  | | | | | '_ ` + "`" + ` _ \  | '_ \  | | \___ \   / __|  / _` + "`" + ` | | '_ \
  | |_| | | | | | | | | | | | | |  ___) | | (__  | (_| | | | | |
-  \___/  |_| |_| |_| |_| |_| |_| |____/   \___|  \__,_| |_| |_|
+  \___/  |_| |_| |_| |_| |_| |_| |____/   \___|  \__,_| |_| |_|`)
 
-  Interactive Scan Mode — Select scans by number, A for all, B for back, Q to quit
-  ────────────────────────────────────────────────────────────────────────────────`)
+	fmt.Println("  Unified Vulnerability Hunting Platform — 13 tools, one interface.")
+	fmt.Println("  ─────────────────────────────────────────────────────────────")
+	fmt.Println("  Developer: EliTechWiz (Eliah Hango)")
+	fmt.Println("  GitHub:    https://github.com/Eliahhango")
+	fmt.Println("  Website:   https://elitechwiz.com")
+	fmt.Println("  Telegram:  @techarmyy")
+	fmt.Println("  ─────────────────────────────────────────────────────────────")
+	fmt.Println()
+	fmt.Println("  Interactive Mode — Select scans by number, A for all, B for back, Q to quit")
+	fmt.Println("  ────────────────────────────────────────────────────────────────────────────")
 }
 
 func printScanList(target, protocol string) {
@@ -219,16 +227,16 @@ func runCategory(cfg *config.Config, target, protocol string, cat *ScanCategory,
 	fmt.Printf("\n  Running %s on %s%s\n", cat.Name, protocol, target)
 	fmt.Println()
 
-	store, err := db.New(cfg.DBPath, cfg.Passphrase)
-	if err != nil {
-		fmt.Printf("  Database unavailable: %v\n", err)
-		return
+	selected := make(map[string]bool)
+	for _, name := range cat.Scanners {
+		selected[name] = true
 	}
-	defer store.Close()
 
-	allFindings := runOrchestrator(cfg, store, target, reader)
-	if len(allFindings) > 0 {
-		generateReport(allFindings, target, cfg.OutputDir, reader)
+	findings := runCustomScanners(target, selected)
+	if len(findings) > 0 {
+		generateReport(findings, target, cfg.OutputDir, reader)
+	} else {
+		fmt.Println("  No findings from selected scanners.")
 	}
 }
 
@@ -389,13 +397,6 @@ func runCustomPicker(cfg *config.Config, target, protocol string, reader *bufio.
 	}
 
 	fmt.Printf("  Running %d selected scanners...\n", len(selected))
-
-	store, err := db.New(cfg.DBPath, cfg.Passphrase)
-	if err != nil {
-		fmt.Printf("  Database unavailable: %v\n", err)
-		return
-	}
-	defer store.Close()
 
 	findings := runCustomScanners(target, selected)
 	if len(findings) > 0 {

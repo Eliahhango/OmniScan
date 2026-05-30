@@ -31,7 +31,7 @@ for i in "${!platforms[@]}"; do
 
   echo "  Building for $GOOS/$GOARCH..."
   GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 \
-    go build -ldflags="-s -w -X main.Version=$VERSION" \
+    go build -ldflags="-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=$VERSION" \
     -o "$output" ./cmd/omniscan
 
   if [ -f "$output" ]; then

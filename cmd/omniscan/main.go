@@ -493,7 +493,7 @@ func runDaemon(configPath string) {
 }
 
 func runSetup() {
-	fmt.Println("OmniScan - Installing tools... (EliTechWiz/github.com/Eliahhango)")
+	fmt.Printf("OmniScan %s - Installing tools... (EliTechWiz/github.com/Eliahhango)\n", scanner.Version)
 
 	progress := make(chan scanner.InstallResult, 13)
 	installer := scanner.NewInstaller("tools")
@@ -524,7 +524,7 @@ func runSetup() {
 }
 
 func runUpdate() {
-	fmt.Println("Updating OmniScan and all integrated tools...")
+	fmt.Printf("Updating OmniScan %s and all integrated tools...\n", scanner.Version)
 
 	progress := make(chan scanner.InstallResult, 14)
 	installer := scanner.NewInstaller("tools")
@@ -554,7 +554,7 @@ func runUpdate() {
 		}
 	}
 	fmt.Printf("\nTools updated: %d, Failed: %d\n", success, failed)
-	fmt.Println("\nOmniScan binary updated in background. Restart omniscan to use the new version.")
+	fmt.Println("\nOmniScan binary updated in background. Run 'omniscan version' to verify, then restart.")
 }
 
 func runBounty(configPath string) {
@@ -577,7 +577,7 @@ func runBounty(configPath string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("OmniScan Bounty Mode — EliTechWiz/github.com/Eliahhango\n")
+	fmt.Printf("OmniScan %s Bounty Mode — EliTechWiz/github.com/Eliahhango\n", scanner.Version)
 	fmt.Printf("  Target: %s", target)
 	if program != "" {
 		fmt.Printf(", Program: %s", program)

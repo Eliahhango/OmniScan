@@ -4,7 +4,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o build/omniscan ./cmd/omniscan
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=$(git describe --tags --always 2>/dev/null || echo dev)" -o build/omniscan ./cmd/omniscan
 
 FROM golang:1.26-alpine AS tool-builder
 RUN apk add --no-cache git
@@ -13,7 +13,7 @@ RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
     go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
     go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
     go install -v github.com/ffuf/ffuf/v2@latest && \
-    go install -v github.com/trufflesecurity/trufflehog/v3@latest && \
+    curl -sL "https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest" | grep -o '"browser_download_url": "[^"]*linux_amd64.tar.gz"' | head -1 | cut -d'"' -f4 | xargs curl -sL | tar xz -C /go/bin/ && \
     go install -v github.com/lc/gau/v2/cmd/gau@latest && \
     go install -v github.com/jaeles-project/gospider@latest && \
     go install -v github.com/OJ/gobuster/v3@latest

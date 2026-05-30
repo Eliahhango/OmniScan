@@ -1,10 +1,19 @@
-.PHONY: build run clean test setup
+.PHONY: build run clean test setup update version
 
 BINARY=omniscan
 BUILD_DIR=build
+VERSION=$(shell git describe --tags --always 2>/dev/null || echo "dev")
+LDFLAGS=-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=$(VERSION)
 
 build:
-	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/omniscan
+	go build -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY) ./cmd/omniscan
+
+update:
+	go install -ldflags="$(LDFLAGS)" github.com/Eliahhango/OmniScan/cmd/omniscan@latest; \
+	omniscan setup
+
+version:
+	@omniscan version
 
 run:
 	go run ./cmd/omniscan

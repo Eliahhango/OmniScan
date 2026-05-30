@@ -18,12 +18,14 @@ import (
 	"github.com/Eliahhango/OmniScan/internal/db"
 	"github.com/Eliahhango/OmniScan/internal/normalizer"
 	"github.com/Eliahhango/OmniScan/internal/recon"
+	"github.com/Eliahhango/OmniScan/internal/version"
 	"github.com/Eliahhango/OmniScan/internal/webhook"
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
 
-// Version is set at build time via ldflags or defaults to dev
-var Version = "dev"
+// Version is the current OmniScan version. Aliased from the canonical version package
+// so that all existing references to scanner.Version continue to work.
+var Version = version.Version
 
 type Orchestrator struct {
 	cfg        *OrchestratorConfig

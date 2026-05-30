@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Eliahhango/OmniScan/internal/version"
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
 
@@ -19,7 +20,7 @@ func (r *ReportPanel) View(findings []types.Finding) string {
 	}
 
 	var lines []string
-	lines = append(lines, "OmniScan Report — EliTechWiz/github.com/Eliahhango")
+	lines = append(lines, fmt.Sprintf("OmniScan %s Report — EliTechWiz/github.com/Eliahhango", version.Version))
 	lines = append(lines, strings.Repeat("=", 60))
 	lines = append(lines, fmt.Sprintf("Total Findings: %d\n", len(findings)))
 

@@ -53,11 +53,23 @@ omniscan scan -t example.com
 # Resume a previous scan
 omniscan scan -t example.com -resume
 
+# Compare two scan results
+omniscan diff 1 2
+
 # Bug bounty mode with program scope
 omniscan bounty -t example.com -program hackerone
 
 # Install all 13 integrated tools
 omniscan setup
+
+# Update OmniScan and all tools to latest versions
+omniscan update
+
+# Show version information
+omniscan version
+
+# Start the daemon (WebSocket dashboard + API)
+omniscan daemon --listen :9090
 ```
 
 ## Architecture

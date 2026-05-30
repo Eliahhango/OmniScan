@@ -30,6 +30,8 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "OmniScan installed successfully!" -ForegroundColor Green
 Write-Host "Run 'omniscan tui' to launch the interactive TUI" -ForegroundColor Green
+Write-Host "Run 'omniscan version' to check the installed version" -ForegroundColor Green
+Write-Host "Run 'omniscan update' to update OmniScan and all tools" -ForegroundColor Green
 Write-Host ""
 Write-Host "Note: Scanning tools (nuclei, nmap, etc.) must be installed separately." -ForegroundColor Yellow
 Write-Host "Run 'omniscan setup' to attempt automatic installation of Go-based tools." -ForegroundColor Yellow

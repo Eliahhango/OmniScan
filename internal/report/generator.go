@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Eliahhango/OmniScan/internal/version"
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
 
@@ -46,6 +47,7 @@ type ReportData struct {
 	ExecutiveSummary       string
 	StrategicRecommendations []string
 	ObservedStrengths      []string
+	Version                string
 }
 
 func NewGenerator(outputDir string) *Generator {
@@ -89,6 +91,7 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 		Findings:    findings,
 		Scope: fmt.Sprintf("Security assessment of %s. Testing methodology follows OWASP Top 10:2025, CWE classification, and CVSS v3.1 scoring standards. All scans performed from an external perspective against publicly accessible endpoints.", target),
 		Methodology: fmt.Sprintf("The assessment was conducted using %d industry-standard scanning engines covering network reconnaissance, web application scanning, directory fuzzing, CVE template matching, static analysis, secret detection, and dependency auditing. Findings are enriched with EPSS (Exploit Prediction Scoring System) scores, mapped to CWE categories and OWASP Top 10:2025 classifications.", len(tools)),
+		Version:     version.Version,
 	}
 
 	data.OWASPCounts = make(map[string]int)

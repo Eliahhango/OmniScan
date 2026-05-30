@@ -11,7 +11,7 @@ builds:
     main: ./cmd/omniscan
     binary: omniscan
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X github.com/Eliahhango/OmniScan/internal/version.Version={{.Version}}
     env:
       - CGO_ENABLED=0
     goos:

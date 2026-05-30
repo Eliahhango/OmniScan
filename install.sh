@@ -195,7 +195,7 @@ fi
 cd "$HOME/OmniScan" && git pull >/dev/null 2>&1
 
 build_start=$SECONDS
-go build -o "$HOME/go/bin/omniscan" ./cmd/omniscan/ >/dev/null 2>&1 &
+    go build -ldflags="-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=$(git describe --tags --always 2>/dev/null || echo dev)" -o "$HOME/go/bin/omniscan" ./cmd/omniscan/ >/dev/null 2>&1 &
 pid=$!; spin='-\|/'; i=0
 while kill -0 "$pid" 2>/dev/null; do
     printf "\r  \033[K${spin:i++%4:1}  Compiling  %s  elapsed %s" \
@@ -233,5 +233,7 @@ else
 fi
 echo ""
 echo -e "${CYAN}Quick test:${NC} omniscan scan -t elitechwiz.com"
+echo -e "${CYAN}Update:${NC}    omniscan update"
+echo -e "${CYAN}Version:${NC}   omniscan version"
 echo -e "${CYAN}Daemon:${NC}   omniscan daemon --listen :9090"
 echo -e "${CYAN}Help:${NC}     omniscan"

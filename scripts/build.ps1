@@ -22,7 +22,7 @@ foreach ($p in $Platforms) {
     $env:GOARCH = $p.Arch
     $env:CGO_ENABLED = "0"
     $outputPath = if ($p.OS -eq "windows") { "$output.exe" } else { $output }
-    go build -ldflags="-s -w -X main.Version=$Version" -o $outputPath ./cmd/omniscan
+    go build -ldflags="-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=$Version" -o $outputPath ./cmd/omniscan
     if ($LASTEXITCODE -eq 0 -and (Test-Path $outputPath)) {
         $len = (Get-Item $outputPath).Length
         Write-Host "    -> $outputPath ($([math]::Round($len/1KB)) KB)" -ForegroundColor Green

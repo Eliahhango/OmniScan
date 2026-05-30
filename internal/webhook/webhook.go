@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Eliahhango/OmniScan/internal/version"
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
 
@@ -84,7 +85,7 @@ func (c *Client) SendBatch(findings []types.Finding) error {
 	}
 
 	payload, err := json.Marshal(map[string]interface{}{
-		"text":    fmt.Sprintf("OmniScan: %d findings above %s threshold", len(filtered), c.MinSeverity),
+		"text":    fmt.Sprintf("OmniScan %s: %d findings above %s threshold", version.Version, len(filtered), c.MinSeverity),
 		"findings": filtered,
 	})
 	if err != nil {

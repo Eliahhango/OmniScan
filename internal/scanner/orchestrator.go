@@ -939,13 +939,21 @@ func UpdateSelf() error {
 		}
 	}
 
-	// Build from local source (no proxy involved)
+	// Build from local source (no proxy involved).
+	// Must set working directory to repoDir so go build finds go.mod.
 	output := filepath.Join(repoDir, "omniscan.new")
-	if _, err := runCmd(ctx, "go", "build",
+	buildCmd := exec.CommandContext(ctx, "go", "build",
 		"-ldflags",
 		fmt.Sprintf("-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=%s", ver),
 		"-o", output,
-		filepath.Join(repoDir, "cmd", "omniscan")); err != nil {
+		"./cmd/omniscan")
+	buildCmd.Dir = repoDir
+	buildOut, err := buildCmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(buildOut))
+		if msg != "" {
+			return fmt.Errorf("go build: %s", msg)
+		}
 		return fmt.Errorf("go build: %w", err)
 	}
 

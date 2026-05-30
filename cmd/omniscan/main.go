@@ -554,7 +554,9 @@ func runUpdate() {
 		}
 	}
 	fmt.Printf("\nTools updated: %d, Failed: %d\n", success, failed)
-	fmt.Println("\nOmniScan binary updated in background. Run 'omniscan version' to verify, then restart.")
+	if r, ok := results["omniscan"]; ok && r.Status == "updated" {
+		fmt.Println("\nOmniScan binary updated in background. Run 'omniscan version' to verify, then restart.")
+	}
 }
 
 func runBounty(configPath string) {

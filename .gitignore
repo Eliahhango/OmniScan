@@ -32,3 +32,8 @@ vendor/
 
 # Encryption keys
 omniscan.key
+omniscan.salt
+
+# Config files (contains passphrase in plaintext)
+omniscan.yaml
+.env

@@ -9,13 +9,13 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/Eliahhango/OmniScan/internal/config"
 	"github.com/Eliahhango/OmniScan/internal/daemon"
 	"github.com/Eliahhango/OmniScan/internal/db"
+	"github.com/Eliahhango/OmniScan/internal/interactive"
 	"github.com/Eliahhango/OmniScan/internal/report"
 	"github.com/Eliahhango/OmniScan/internal/scanner"
 	"github.com/Eliahhango/OmniScan/internal/tui"
@@ -40,52 +40,63 @@ func printBanner() {
 	fmt.Println()
 }
 
+func printUsage() {
+	fmt.Println("Usage:")
+	fmt.Println("  omniscan                         Launch interactive CLI mode (RED_HAWK-style)")
+	fmt.Println("  omniscan tui                     Launch interactive TUI")
+	fmt.Println("  omniscan scan [flags] <target>   Run scan")
+	fmt.Println("  omniscan diff <id1> <id2>        Compare two scans")
+	fmt.Println("  omniscan daemon [--listen :8080] Start daemon server")
+	fmt.Println("  omniscan setup                   Install all 13 tools")
+	fmt.Println("  omniscan update                  Update OmniScan + all tools")
+	fmt.Println("  omniscan reinstall               Full reinstall (like install.sh)")
+	fmt.Println("  omniscan restart                 Re-exec current binary")
+	fmt.Println("  omniscan version                 Show version info")
+	fmt.Println("  omniscan bounty <target>         Bug bounty mode")
+	fmt.Println("  omniscan help                    Show this help menu")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  -t <target>         Scan target (domain or IP)")
+	fmt.Println("  -program            Bug bounty program name")
+	fmt.Println("  -resume             Resume from last checkpoint")
+	fmt.Println("  -config <path>      Config file path")
+	fmt.Println("  -json               Output findings as JSON lines")
+	fmt.Println("  -timeout <dur>      Scan timeout (default 30m, e.g. 1h, 45m)")
+	fmt.Println("  -exit-on-severity   Exit non-zero if any finding >= severity (critical|high|medium|low)")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  omniscan")
+	fmt.Println("  omniscan tui")
+	fmt.Println("  omniscan scan -t example.com")
+	fmt.Println("  omniscan scan --json --exit-on-severity=high -t example.com")
+	fmt.Println("  omniscan diff 1 2")
+	fmt.Println("  omniscan daemon --listen :9090")
+	fmt.Println("  omniscan update")
+	fmt.Println("  omniscan version")
+	fmt.Println("  omniscan bounty -t example.com -program hackerone")
+	fmt.Println("  omniscan setup")
+}
+
 func main() {
-	if len(os.Args) < 2 || (os.Args[1] != "reinstall" && os.Getenv("OMNISCAN_UPDATED") == "") {
-		printBanner()
+	if len(os.Args) < 2 {
+		interactive.Run()
+		return
 	}
 
-	if len(os.Args) < 2 {
-		fmt.Println("Usage:")
-		fmt.Println("  omniscan tui                      Launch interactive TUI")
-		fmt.Println("  omniscan scan [flags] <target>    Run scan")
-		fmt.Println("  omniscan diff <id1> <id2>         Compare two scans")
-		fmt.Println("  omniscan daemon [--listen :8080]  Start daemon server")
-		fmt.Println("  omniscan setup                    Install all 13 tools")
-		fmt.Println("  omniscan update                   Update OmniScan + all tools")
-		fmt.Println("  omniscan reinstall                Full reinstall (like install.sh)")
-		fmt.Println("  omniscan restart                  Re-exec current binary")
-		fmt.Println("  omniscan version                  Show version info")
-		fmt.Println("  omniscan bounty <target>          Bug bounty mode")
-		fmt.Println()
-		fmt.Println("Flags:")
-		fmt.Println("  -t <target>         Scan target (domain or IP)")
-		fmt.Println("  -program            Bug bounty program name")
-		fmt.Println("  -resume             Resume from last checkpoint")
-		fmt.Println("  -config <path>      Config file path")
-		fmt.Println("  -json               Output findings as JSON lines")
-		fmt.Println("  -timeout <dur>      Scan timeout (default 30m, e.g. 1h, 45m)")
-		fmt.Println("  -exit-on-severity   Exit non-zero if any finding >= severity (critical|high|medium|low)")
-		fmt.Println()
-		fmt.Println("Examples:")
-		fmt.Println("  omniscan tui")
-		fmt.Println("  omniscan scan -t example.com")
-		fmt.Println("  omniscan scan --json --exit-on-severity=high -t example.com")
-		fmt.Println("  omniscan diff 1 2")
-		fmt.Println("  omniscan daemon --listen :9090")
-		fmt.Println("  omniscan update")
-		fmt.Println("  omniscan version")
-		fmt.Println("  omniscan bounty -t example.com -program hackerone")
-		fmt.Println("  omniscan setup")
-		return
+	if os.Args[1] != "reinstall" && os.Getenv("OMNISCAN_UPDATED") == "" {
+		printBanner()
 	}
 
 	cmd := os.Args[1]
 	configPath := "omniscan.yaml"
 
 	switch cmd {
+	case "help", "-h", "--help":
+		printUsage()
 	case "tui":
 		runTUI(configPath)
+	case "interactive", "i":
+		interactive.Run()
 	case "scan":
 		runScan(configPath)
 	case "diff":
@@ -665,10 +676,15 @@ func runRestart() {
 		os.Exit(1)
 	}
 	fmt.Printf("Restarting %s...\n", self)
-	if err := syscall.Exec(self, os.Args, os.Environ()); err != nil {
+	cmd := exec.Command(self, os.Args[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Start(); err != nil {
 		fmt.Printf("restart failed: %v\n", err)
 		os.Exit(1)
 	}
+	os.Exit(0)
 }
 
 func runBounty(configPath string) {

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -51,6 +52,7 @@ func main() {
 		fmt.Println("  omniscan setup                    Install all 13 tools")
 		fmt.Println("  omniscan update                   Update OmniScan + all tools")
 		fmt.Println("  omniscan reinstall                Full reinstall (like install.sh)")
+		fmt.Println("  omniscan restart                  Re-exec current binary")
 		fmt.Println("  omniscan version                  Show version info")
 		fmt.Println("  omniscan bounty <target>          Bug bounty mode")
 		fmt.Println()
@@ -93,6 +95,8 @@ func main() {
 		runUpdate()
 	case "reinstall":
 		runReinstall()
+	case "restart":
+		runRestart()
 	case "version":
 		fmt.Printf("OmniScan %s\n", scanner.Version)
 	case "bounty":
@@ -612,6 +616,19 @@ func runReinstall() {
 		fmt.Println("\nOmniScan binary updated. Restart to use the new version.")
 	} else if r, ok := results["omniscan"]; ok && r.Status == "installed" {
 		fmt.Println("\nOmniScan installed.")
+	}
+}
+
+func runRestart() {
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Printf("restart failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Restarting %s...\n", self)
+	if err := syscall.Exec(self, os.Args, os.Environ()); err != nil {
+		fmt.Printf("restart failed: %v\n", err)
+		os.Exit(1)
 	}
 }
 

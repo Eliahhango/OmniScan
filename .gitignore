@@ -29,3 +29,6 @@ Thumbs.db
 
 # Go
 vendor/
+
+# Encryption keys
+omniscan.key

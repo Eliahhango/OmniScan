@@ -68,10 +68,11 @@ func (n *Nuclei) Run(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		if n.Results != nil {
 			n.Results <- types.Finding{
-				ID:          "nuclei-skip",
-				Title:       "Nuclei not available",
-				Description: "Nuclei scanner encountered an error and was skipped",
+				ID:          "nuclei-unavailable",
+				Title:       "Nuclei Not Available",
+				Description: fmt.Sprintf("Nuclei scanner could not be executed: %v. Install with: omniscan setup or go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", err),
 				Severity:    types.SeverityInfo,
+				AffectedURL: n.Target,
 				ToolSource:  "nuclei",
 				Timestamp:   time.Now(),
 			}

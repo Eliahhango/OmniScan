@@ -68,9 +68,9 @@ func (g *Gobuster) Run(ctx context.Context) error {
 	if err != nil {
 		if g.Results != nil {
 			g.Results <- types.Finding{
-				ID:          "gobuster-skip",
-				Title:       "Gobuster not available",
-				Description: "Gobuster scanner encountered an error and was skipped",
+				ID:          "gobuster-unavailable",
+				Title:       "Gobuster Not Available",
+				Description: fmt.Sprintf("Gobuster scanner could not be executed. Install with: go install github.com/OJ/gobuster/v3@latest"),
 				Severity:    types.SeverityInfo,
 				ToolSource:  "gobuster",
 				Timestamp:   time.Now(),

@@ -312,32 +312,189 @@ func (g *Generator) GenerateMarkdown(data ReportData) (string, error) {
 	}
 	defer f.Close()
 
-	fmt.Fprintf(f, "# Security Report: %s\n\n", data.Target)
-	fmt.Fprintf(f, "**Scan Date:** %s\n", data.ScanDate)
-	fmt.Fprintf(f, "**Duration:** %s\n", data.Duration)
-	fmt.Fprintf(f, "**Total Vulnerabilities:** %d\n\n", data.TotalVulns)
-
-	fmt.Fprintf(f, "## Severity Breakdown\n")
-	fmt.Fprintf(f, "- Critical: %d\n", data.SeverityBreakdown.Critical)
-	fmt.Fprintf(f, "- High: %d\n", data.SeverityBreakdown.High)
-	fmt.Fprintf(f, "- Medium: %d\n", data.SeverityBreakdown.Medium)
-	fmt.Fprintf(f, "- Low: %d\n", data.SeverityBreakdown.Low)
-	fmt.Fprintf(f, "- Info: %d\n\n", data.SeverityBreakdown.Info)
-
-	fmt.Fprintf(f, "## Findings\n\n")
-	for _, finding := range data.Findings {
-		fmt.Fprintf(f, "### [%s] %s\n", finding.Severity, finding.Title)
-		if finding.CVE != "" {
-			fmt.Fprintf(f, "- CVE: %s\n", finding.CVE)
-		}
-		if len(finding.CWE) > 0 {
-			fmt.Fprintf(f, "- CWE: %s\n", finding.CWE)
-		}
-		if finding.AffectedURL != "" {
-			fmt.Fprintf(f, "- URL: %s\n", finding.AffectedURL)
-		}
-		fmt.Fprintf(f, "\n")
+	w := func(format string, a ...interface{}) {
+		fmt.Fprintf(f, format, a...)
 	}
+
+	// ── Cover ──
+	w("# Vulnerability Assessment Report\n\n")
+	w("**Target:** %s  \n", data.Target)
+	w("**Scan Date:** %s  \n", data.ScanDate)
+	w("**Duration:** %s  \n", data.Duration)
+	w("**Tools Deployed:** %d  \n", len(data.ToolsUsed))
+	w("**Engine Version:** OmniScan %s  \n\n", data.Version)
+	w("---\n\n")
+
+	// ── 1. Executive Summary ──
+	w("## 1. Executive Summary\n\n")
+	w("%s\n\n", data.ExecutiveSummary)
+	if data.TotalVulns > 0 {
+		w("**Risk Posture:** %s  \n", data.RiskLabel)
+		w("**Total Findings:** %d  \n", data.TotalVulns)
+		w("**Average CVSS Score:** %.1f  \n", data.CVSSAvg)
+		w("**CWE Categories Identified:** %d  \n", data.CWECount)
+		w("**OWASP Top 10:2025 Coverage:** %d/10  \n\n", data.OWASPCoverage)
+	}
+
+	// ── 2. Scope & Methodology ──
+	w("## 2. Scope & Methodology\n\n")
+	w("### 2.1 Scope\n\n%s\n\n", data.Scope)
+	w("### 2.2 Methodology\n\n%s\n\n", data.Methodology)
+	w("**Standards & Frameworks:**  \n")
+	w("- CVSS v3.1 — Common Vulnerability Scoring System  \n")
+	w("- CWE — Common Weakness Enumeration  \n")
+	w("- OWASP Top 10:2025 — Web Application Security Risks  \n")
+	w("- EPSS — Exploit Prediction Scoring System  \n")
+	w("- NVD — National Vulnerability Database  \n\n")
+	w("**Tools Used:** %s  \n\n", strings.Join(data.ToolsUsed, ", "))
+
+	// ── 3. Findings Summary ──
+	w("## 3. Findings Summary\n\n")
+	w("### 3.1 Severity Distribution\n\n")
+	w("| Severity | Count |\n")
+	w("|----------|-------|\n")
+	w("| Critical | %d |\n", data.SeverityBreakdown.Critical)
+	w("| High     | %d |\n", data.SeverityBreakdown.High)
+	w("| Medium   | %d |\n", data.SeverityBreakdown.Medium)
+	w("| Low      | %d |\n", data.SeverityBreakdown.Low)
+	w("| Info     | %d |\n", data.SeverityBreakdown.Info)
+	w("| **Total**| **%d** |\n\n", data.TotalVulns)
+
+	if len(data.TopCritical) > 0 {
+		w("### 3.2 Top Critical & High Severity Findings\n\n")
+		w("| # | Severity | Title | CVE | URL |\n")
+		w("|---|----------|-------|-----|-----|\n")
+		for i, f := range data.TopCritical {
+			cve := f.CVE
+			if cve == "" {
+				cve = "-"
+			}
+			w("| %d | %s | %s | %s | %s |\n", i+1, f.Severity, f.Title, cve, f.AffectedURL)
+		}
+		w("\n")
+	}
+
+	if len(data.OWASPCounts) > 0 {
+		w("### 3.3 OWASP Top 10:2025 Coverage\n\n")
+		w("| Category | Count |\n")
+		w("|----------|-------|\n")
+		for _, cat := range []string{
+			"Broken Access Control", "Cryptographic Failures", "Injection",
+			"Insecure Design", "Security Misconfiguration", "Vulnerable and Outdated Components",
+			"Identification and Authentication Failures", "Software and Data Integrity Failures",
+			"Security Logging and Monitoring Failures", "SSRF",
+		} {
+			count := data.OWASPCounts[cat]
+			w("| %s | %d |\n", cat, count)
+		}
+		w("\n")
+	}
+
+	// ── 4. Observed Security Strengths ──
+	w("## 4. Observed Security Strengths\n\n")
+	if len(data.ObservedStrengths) == 0 {
+		w("No specific strengths were identified during this assessment.\n\n")
+	} else {
+		for i, s := range data.ObservedStrengths {
+			w("%d. %s\n", i+1, s)
+		}
+		w("\n")
+	}
+
+	// ── 5. Detailed Findings ──
+	w("## 5. Detailed Findings\n\n")
+	if len(data.Findings) == 0 {
+		w("No vulnerabilities were identified during the assessment.\n\n")
+	} else {
+		w("| # | Severity | Title | CVE | CWE | CVSS | EPSS | URL | Tool |\n")
+		w("|---|----------|-------|-----|-----|------|------|-----|------|\n")
+		for i, f := range data.Findings {
+			cve := f.CVE
+			if cve == "" {
+				cve = "-"
+			}
+			cwe := ""
+			if len(f.CWE) > 0 {
+				cwe = f.CWE[0]
+			}
+			cvss := fmt.Sprintf("%.1f", f.CVSS)
+			if f.CVSS == 0 {
+				cvss = "-"
+			}
+			epss := ""
+			if f.EPSS > 0 {
+				epss = fmt.Sprintf("%.4f", f.EPSS)
+			} else {
+				epss = "-"
+			}
+			w("| %d | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+				i+1, f.Severity, f.Title, cve, cwe, cvss, epss, f.AffectedURL, f.ToolSource)
+		}
+		w("\n")
+
+		// Per-finding details
+		w("### 5.1 Finding Details\n\n")
+		for i, f := range data.Findings {
+			w("#### Finding %d: [%s] %s\n\n", i+1, f.Severity, f.Title)
+			if f.Description != "" {
+				w("**Description:** %s\n\n", f.Description)
+			}
+			w("- **Severity:** %s  \n", f.Severity)
+			w("- **Tool:** %s  \n", f.ToolSource)
+			if f.AffectedURL != "" {
+				w("- **Affected URL:** `%s`  \n", f.AffectedURL)
+			}
+			if f.CVE != "" {
+				w("- **CVE:** %s  \n", f.CVE)
+			}
+			if len(f.CWE) > 0 {
+				w("- **CWE:** %s  \n", strings.Join(f.CWE, ", "))
+			}
+			if f.OWASP2025 != "" {
+				w("- **OWASP:** %s  \n", f.OWASP2025)
+			}
+			if f.CVSS > 0 {
+				w("- **CVSS Score:** %.1f  \n", f.CVSS)
+				if f.CVSSVector != "" {
+					w("- **CVSS Vector:** `%s`  \n", f.CVSSVector)
+				}
+			}
+			if f.EPSS > 0 {
+				w("- **EPSS Score:** %.4f  \n", f.EPSS)
+			}
+			if f.Proof != "" {
+				w("- **Proof:** `%s`  \n", f.Proof)
+			}
+			if f.Remediation != "" {
+				w("\n**Remediation:** %s  \n", f.Remediation)
+			}
+			w("\n---\n\n")
+		}
+	}
+
+	// ── 6. Strategic Recommendations ──
+	w("## 6. Strategic Recommendations\n\n")
+	if len(data.StrategicRecommendations) == 0 {
+		w("No specific recommendations at this time.\n\n")
+	} else {
+		for i, r := range data.StrategicRecommendations {
+			w("%d. %s\n\n", i+1, r)
+		}
+	}
+
+	// ── Appendix ──
+	w("## Appendix A: Severity Reference\n\n")
+	w("| Severity | CVSS Range | Description |\n")
+	w("|----------|------------|-------------|\n")
+	w("| Critical | 9.0–10.0   | Exploitation is trivial and can lead to complete system compromise |\n")
+	w("| High     | 7.0–8.9    | Significant impact; exploitation likely with moderate skill |\n")
+	w("| Medium   | 4.0–6.9    | Notable risk; exploitation possible under specific conditions |\n")
+	w("| Low      | 0.1–3.9    | Limited impact; requires chaining or special circumstances |\n")
+	w("| Info     | 0.0        | Informational; does not represent a security risk |\n\n")
+
+	w("---\n\n")
+	w("*Report generated by OmniScan %s — EliTechWiz/github.com/Eliahhango*\n", data.Version)
+	w("*Assessment conducted on %s*\n", data.ScanDate)
 
 	return path, nil
 }

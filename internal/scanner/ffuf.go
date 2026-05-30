@@ -72,9 +72,9 @@ func (f *FFUF) Run(ctx context.Context) error {
 	if err != nil {
 		if f.Results != nil {
 			f.Results <- types.Finding{
-				ID:          "ffuf-skip",
-				Title:       "FFUF not available",
-				Description: "FFUF scanner encountered an error and was skipped",
+				ID:          "ffuf-unavailable",
+				Title:       "FFUF Not Available",
+				Description: fmt.Sprintf("FFUF scanner could not be executed. Install with: go install github.com/ffuf/ffuf/v2@latest"),
 				Severity:    types.SeverityInfo,
 				ToolSource:  "ffuf",
 				Timestamp:   time.Now(),

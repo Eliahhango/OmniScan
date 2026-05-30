@@ -44,9 +44,9 @@ func (n *NmapScanner) Run(ctx context.Context) error {
 	if err := cmd.Run(); err != nil {
 		if n.Results != nil {
 			n.Results <- types.Finding{
-				ID:          "nmap-skip",
-				Title:       "Nmap not available",
-				Description: "Nmap scanner encountered an error and was skipped",
+				ID:          "nmap-unavailable",
+				Title:       "Nmap Not Available",
+				Description: fmt.Sprintf("Nmap scanner could not be executed. Install via package manager: apt install nmap"),
 				Severity:    types.SeverityInfo,
 				ToolSource:  "nmap",
 				Timestamp:   time.Now(),

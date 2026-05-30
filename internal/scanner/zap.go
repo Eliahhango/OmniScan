@@ -72,9 +72,9 @@ func (z *ZAP) Run(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		if z.Results != nil {
 			z.Results <- types.Finding{
-				ID:          "zap-skip",
-				Title:       "ZAP not available",
-				Description: "ZAP scanner encountered an error and was skipped",
+				ID:          "zap-unavailable",
+				Title:       "ZAP Not Available",
+				Description: fmt.Sprintf("ZAP scanner could not be executed. Install ZAP manually: https://www.zaproxy.org/download/"),
 				Severity:    types.SeverityInfo,
 				ToolSource:  "zap",
 				Timestamp:   time.Now(),

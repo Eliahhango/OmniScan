@@ -45,6 +45,17 @@ func (n *Nikto) Run(ctx context.Context) error {
 	cmd.Stderr = nil
 
 	if err := cmd.Start(); err != nil {
+		if n.Results != nil {
+			n.Results <- types.Finding{
+				ID:          "nikto-unavailable",
+				Title:       "Nikto Not Available",
+				Description: fmt.Sprintf("Nikto scanner could not be executed: %v. Install via package manager: apt install nikto", err),
+				Severity:    types.SeverityInfo,
+				AffectedURL: n.Target,
+				ToolSource:  "nikto",
+				Timestamp:   time.Now(),
+			}
+		}
 		return nil
 	}
 

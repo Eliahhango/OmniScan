@@ -520,6 +520,7 @@ func (i *Installer) InstallAll() map[string]InstallResult {
 		"zap":        i.installZap,
 		"semgrep":    i.installSemgrep,
 		"trufflehog": i.installTrufflehog,
+		"gobuster":   i.installGobuster,
 		"gau":        i.installGau,
 		"gospider":   i.installGospider,
 	}
@@ -701,6 +702,11 @@ func (i *Installer) UpdateAll() map[string]InstallResult {
 		}
 	}
 	return i.InstallAll()
+}
+
+func (i *Installer) installGobuster() error {
+	_, err := runCmd(context.Background(), "go", "install", "github.com/OJ/gobuster/v3@latest")
+	return err
 }
 
 func (i *Installer) installGau() error {

@@ -26,8 +26,8 @@ func (o *OpenVAS) Run(ctx context.Context) error {
 	}()
 	if o.Results != nil {
 		o.Results <- types.Finding{
-			ID:          "openvas-skip",
-			Title:       "OpenVAS not available",
+			ID:          "openvas-unavailable",
+			Title:       "OpenVAS Not Available",
 			Description: fmt.Sprintf("OpenVAS integration requires manual setup. Target: %s", o.Target),
 			Severity:    types.SeverityInfo,
 			ToolSource:  "openvas",

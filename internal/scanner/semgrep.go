@@ -35,9 +35,9 @@ func (s *Semgrep) Run(ctx context.Context) error {
 	if err != nil {
 		if s.Results != nil {
 			s.Results <- types.Finding{
-				ID:          "semgrep-skip",
-				Title:       "Semgrep not available",
-				Description: "Semgrep scanner encountered an error and was skipped",
+				ID:          "semgrep-unavailable",
+				Title:       "Semgrep Not Available",
+				Description: fmt.Sprintf("Semgrep scanner could not be executed. Install with: pip install semgrep"),
 				Severity:    types.SeverityInfo,
 				ToolSource:  "semgrep",
 				Timestamp:   time.Now(),

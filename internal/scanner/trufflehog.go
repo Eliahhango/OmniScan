@@ -57,9 +57,9 @@ func (t *TruffleHog) Run(ctx context.Context) error {
 	if err != nil {
 		if t.Results != nil {
 			t.Results <- types.Finding{
-				ID:          "trufflehog-skip",
-				Title:       "TruffleHog not available",
-				Description: "TruffleHog scanner encountered an error and was skipped",
+				ID:          "trufflehog-unavailable",
+				Title:       "TruffleHog Not Available",
+				Description: fmt.Sprintf("TruffleHog scanner could not be executed. Install with: omniscan setup"),
 				Severity:    types.SeverityInfo,
 				ToolSource:  "trufflehog",
 				Timestamp:   time.Now(),

@@ -412,7 +412,11 @@ func runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return output, fmt.Errorf("%s: %w\n%s", name, err, string(output))
+		msg := strings.TrimSpace(string(output))
+		if msg != "" {
+			return output, fmt.Errorf("%s: %s", name, msg)
+		}
+		return output, fmt.Errorf("%s: %v", name, err)
 	}
 	return output, nil
 }
@@ -559,7 +563,10 @@ func (i *Installer) InstallAll() map[string]InstallResult {
 			i.Results[name] = result
 			i.mu.Unlock()
 			if i.Progress != nil {
-				i.Progress <- result
+				select {
+				case i.Progress <- result:
+				default:
+				}
 			}
 		}(name, fn)
 	}
@@ -595,20 +602,20 @@ func (i *Installer) installFfuf() error {
 func (i *Installer) installNmap() error {
 	switch runtime.GOOS {
 	case "linux":
-		// Try apt-get first, then yum, then apk
 		cmds := []string{
-			"apt-get install -y nmap",
-			"yum install -y nmap",
-			"apk add nmap",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y -q nmap 2>/dev/null",
+			"dnf install -y nmap 2>/dev/null",
+			"yum install -y nmap 2>/dev/null",
+			"apk add nmap 2>/dev/null",
 		}
 		var err error
 		for _, c := range cmds {
-			_, err = runCmd(context.Background(), "sh", "-c", c+" 2>/dev/null")
+			_, err = runCmd(context.Background(), "sh", "-c", c)
 			if err == nil {
 				return nil
 			}
 		}
-		return fmt.Errorf("nmap install failed: %w. Try: apt-get install nmap", err)
+		return fmt.Errorf("nmap install failed. Try: apt-get install nmap")
 	case "darwin":
 		_, err := runCmd(context.Background(), "brew", "install", "nmap")
 		return err
@@ -663,34 +670,24 @@ func (i *Installer) installNikto() error {
 func (i *Installer) installOpenVAS() error {
 	switch runtime.GOOS {
 	case "linux":
-		// Try apt-get
 		cmds := []string{
-			"apt-get install -y openvas",
-			"apt-get install -y gvm",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y -q openvas 2>/dev/null",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y -q gvm 2>/dev/null",
+			"dnf install -y openvas 2>/dev/null",
+			"yum install -y openvas 2>/dev/null",
 		}
 		var err error
 		for _, c := range cmds {
-			_, err = runCmd(context.Background(), "sh", "-c", c+" 2>/dev/null")
+			_, err = runCmd(context.Background(), "sh", "-c", c)
 			if err == nil {
 				return nil
 			}
 		}
-		// Install docker if not present, then pull greenbone/gvm
-		_, _ = runCmd(context.Background(), "sh", "-c", "apt-get install -y docker.io 2>/dev/null")
-		_, err = runCmd(context.Background(), "docker", "pull", "greenbone/gvm")
-		if err == nil {
-			return nil
-		}
-		return fmt.Errorf("openvas install failed. Try: apt-get install openvas or docker pull greenbone/gvm")
+		return fmt.Errorf("openvas install failed. Install manually: apt-get install openvas")
 	case "darwin":
-		_, _ = runCmd(context.Background(), "sh", "-c", "brew install --cask docker 2>/dev/null")
-		_, err := runCmd(context.Background(), "docker", "pull", "greenbone/gvm")
-		if err == nil {
-			return nil
-		}
-		return fmt.Errorf("openvas on macOS: brew install --cask docker && docker pull greenbone/gvm")
+		return fmt.Errorf("openvas install failed. Try: docker pull greenbone/gvm")
 	case "windows":
-		return fmt.Errorf("openvas on Windows: use Docker: docker pull greenbone/gvm")
+		return fmt.Errorf("openvas install failed. Try: docker pull greenbone/gvm")
 	}
 	return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 }
@@ -764,9 +761,8 @@ func (i *Installer) installZap() error {
 func (i *Installer) installSemgrep() error {
 	switch runtime.GOOS {
 	case "linux":
-		// Ensure python3-pip is installed, then pip install semgrep
-		_, _ = runCmd(context.Background(), "sh", "-c", "apt-get install -y python3-pip python3-venv 2>/dev/null")
-		_, _ = runCmd(context.Background(), "sh", "-c", "yum install -y python3-pip 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-pip python3-venv 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "dnf install -y python3-pip 2>/dev/null")
 		cmds := []string{
 			"pip3 install semgrep",
 			"pip install semgrep",
@@ -780,7 +776,7 @@ func (i *Installer) installSemgrep() error {
 				return nil
 			}
 		}
-		return fmt.Errorf("semgrep install failed: %w. Try: apt-get install python3-pip && pip3 install semgrep", err)
+		return fmt.Errorf("semgrep install failed. Try: apt-get install python3-pip && pip3 install semgrep")
 	case "darwin":
 		cmds := []string{
 			"pip3 install semgrep",
@@ -796,7 +792,7 @@ func (i *Installer) installSemgrep() error {
 				return nil
 			}
 		}
-		return fmt.Errorf("semgrep install failed: %w. Try: brew install semgrep or pip3 install semgrep", err)
+		return fmt.Errorf("semgrep install failed. Try: pip3 install semgrep")
 	case "windows":
 		return fmt.Errorf("semgrep on Windows: python -m pip install semgrep")
 	}
@@ -899,13 +895,18 @@ func UpdateSelf() error {
 func (i *Installer) UpdateAll() map[string]InstallResult {
 	// Update self first
 	if err := UpdateSelf(); err != nil {
-		// If self-update fails, still try to update tools
 		if i.Progress != nil {
-			i.Progress <- InstallResult{Name: "omniscan", Status: "failed", Error: err.Error()}
+			select {
+			case i.Progress <- InstallResult{Name: "omniscan", Status: "failed", Error: err.Error()}:
+			default:
+			}
 		}
 	} else {
 		if i.Progress != nil {
-			i.Progress <- InstallResult{Name: "omniscan", Status: "updated"}
+			select {
+			case i.Progress <- InstallResult{Name: "omniscan", Status: "updated"}:
+			default:
+			}
 		}
 	}
 	return i.InstallAll()

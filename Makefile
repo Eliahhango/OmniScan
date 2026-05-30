@@ -1,4 +1,4 @@
-.PHONY: build run clean test setup update version
+.PHONY: build run clean test setup update version help
 
 BINARY=omniscan
 BUILD_DIR=build

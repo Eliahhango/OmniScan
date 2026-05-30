@@ -15,6 +15,7 @@ OmniScan integrates 13 security scanning tools into a single real-time TUI with 
 ## Features
 
 - **Unified Coverage** — Run nuclei, nmap, nikto, ZAP, ffuf, subfinder, httpx, katana, gospider, gau, semgrep, trufflehog, and OpenVAS from one interface
+- **Interactive CLI** — RED_HAWK-inspired numbered menu with category-based scan selection
 - **Real-time TUI** — Bubble Tea-powered terminal UI with live scan progress, recon panel, and report preview
 - **Dedup Engine** — Smart deduplication by URL+CVE, URL+CWE+param, and CVE fingerprints
 - **CVE→CWE→OWASP Mapping** — Automatic normalization and mapping to OWASP 2025 categories
@@ -33,7 +34,8 @@ go install github.com/Eliahhango/OmniScan/cmd/omniscan@latest
 ### Docker
 ```bash
 docker build -t omniscan:latest .
-docker run -it omniscan:latest tui
+docker run -it omniscan:latest          # Interactive CLI menu
+docker run -it omniscan:latest tui      # TUI mode
 ```
 
 ### One-command installer (Linux)
@@ -44,7 +46,13 @@ curl -sL https://raw.githubusercontent.com/Eliahhango/OmniScan/master/install.sh
 ## Quick Start
 
 ```bash
-# Launch the interactive TUI
+# Launch the interactive CLI (numbered menu — pick scans by category)
+omniscan
+
+# Show usage / help menu
+omniscan help
+
+# Launch the interactive TUI (Bubble Tea GUI)
 omniscan tui
 
 # Run a full scan from the CLI
@@ -140,9 +148,10 @@ internal/
   config/           Configuration loading
   db/               SQLite database layer
   normalizer/       Dedup, CVE→CWE→OWASP mapping
+  interactive/      Interactive CLI menu (numbered scan selection)
   recon/            Subdomain discovery, crawling, probing
   report/           Report generation (HTML, JSON, MD, CSV)
-  scanner/          Tool orchestrators, installers
+  scanner/          Tool orchestrators, installers, 40+ custom scanners
   tui/              Bubble Tea TUI
 pkg/types/          Shared types
 ```

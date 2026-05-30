@@ -33,6 +33,7 @@ func NewCustomScanner(target string) *CustomScanner {
 }
 
 func (cs *CustomScanner) Run(ctx context.Context) {
+	defer close(cs.Results)
 	for _, c := range CustomChecks {
 		select {
 		case <-ctx.Done():

@@ -41,7 +41,9 @@ func printBanner() {
 }
 
 func main() {
-	printBanner()
+	if len(os.Args) < 2 || os.Args[1] != "reinstall" {
+		printBanner()
+	}
 
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")

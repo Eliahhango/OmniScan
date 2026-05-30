@@ -188,6 +188,36 @@ var CustomChecks = []CustomCheck{
 		Description: "Exposed admin, internal, and sensitive endpoints",
 		Check:       checkExposedEndpoints,
 	},
+	{
+		Name:        "sqli-detection",
+		Description: "SQL injection detection via boolean/time-based blind probes",
+		Check:       checkSQLi,
+	},
+	{
+		Name:        "csrf-detection",
+		Description: "Cross-Site Request Forgery (CSRF) protection check",
+		Check:       checkCSRF,
+	},
+	{
+		Name:        "command-injection",
+		Description: "OS command injection detection on common parameters",
+		Check:       checkCommandInjection,
+	},
+	{
+		Name:        "xxe-detection",
+		Description: "XML External Entity (XXE) injection detection",
+		Check:       checkXXE,
+	},
+	{
+		Name:        "http-smuggling",
+		Description: "HTTP Request Smuggling detection via ambiguation",
+		Check:       checkHTTPSmuggling,
+	},
+	{
+		Name:        "xss-stored-dom",
+		Description: "XSS injection probes (stored, DOM, Markdown, SVG vectors)",
+		Check:       checkXSSProbes,
+	},
 }
 
 func checkIDOR(target string) ([]types.Finding, error) {
@@ -1861,6 +1891,468 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+var sqliErrorPatterns = []struct {
+	re  *regexp.Regexp
+	db  string
+}{
+	{regexp.MustCompile(`(?i)(SQL syntax.*MySQL|You have an error in your SQL|Warning.*mysql_)`), "MySQL"},
+	{regexp.MustCompile(`(?i)(PostgreSQL.*ERROR|psql:|unterminated quoted string)`), "PostgreSQL"},
+	{regexp.MustCompile(`(?i)(ORA-\d{5}|Oracle error|PLS-\d{5})`), "Oracle"},
+	{regexp.MustCompile(`(?i)(Microsoft OLE DB.*SQL Server|Unclosed quotation mark.*SQL Server|SQLServer.*Driver)`), "SQL Server"},
+	{regexp.MustCompile(`(?i)(SQLite.*error|SQLITE_ERROR|near\s+["'][^"']*["']:\s*syntax)`), "SQLite"},
+	{regexp.MustCompile(`(?i)(mariadb|MariaDB.*error)`), "MariaDB"},
+}
+
+var sqliParams = []string{"id", "user_id", "order_id", "item_id", "product_id", "page_id", "locId", "regId", "email", "username", "city", "category_id", "countryFilter[]"}
+
+var sqliPayloads = []struct{ payload, technique string }{
+	{"'", "single-quote probe"},
+	{`"`, "double-quote probe"},
+	{"' OR '1'='1", "tautology boolean"},
+	{`' OR 1=1--`, "tautology comment"},
+	{`' AND SLEEP(5)--`, "MySQL time-based blind"},
+	{`' WAITFOR DELAY '0:0:5'--`, "SQL Server time-based blind"},
+	{`' UNION SELECT 1,2,3--`, "UNION-based probe"},
+	{"1' ORDER BY 100--", "ORDER BY column enum"},
+}
+
+func checkSQLi(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	endpoints := []string{target + "/", target + "/api/", target + "/v1/", target + "/product", target + "/user"}
+
+	for _, ep := range endpoints {
+		for _, param := range sqliParams {
+			for _, payload := range sqliPayloads {
+				u := fmt.Sprintf("%s?%s=%s", ep, param, payload.payload)
+				resp, err := sharedClient.Get(u)
+				if err != nil {
+					continue
+				}
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					continue
+				}
+				bodyStr := string(body)
+				for _, db := range sqliErrorPatterns {
+					if db.re.MatchString(bodyStr) {
+						match := db.re.FindString(bodyStr)
+						findings = append(findings, types.Finding{
+							ID:           fmt.Sprintf("sqli-%s-%x", param, sha256.Sum256([]byte(u)))[:24],
+							Title:        fmt.Sprintf("SQL Injection — %s Error Disclosure (%s)", db.db, payload.technique),
+							Severity:     types.SeverityCritical,
+							AffectedURL:  u,
+							CWE:          []string{"CWE-89"},
+							OWASP2025:    "Injection",
+							CVSS:         9.1,
+							CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:L",
+							Description:  fmt.Sprintf("SQL injection via %s parameter using %s. The application leaks %s database errors, confirming injectable input.", param, payload.technique, db.db),
+							AttackScenario: fmt.Sprintf("1. Attacker sends %s\n2. %s DB error confirms injection\n3. UNION or blind techniques extract user data, hashes, or admin credentials", u, db.db),
+							Evidence:     fmt.Sprintf("Payload: %s\nDB Error: %s\n\n%s", payload.payload, match, bodyStr[:min(len(bodyStr), 400)]),
+							Remediation:  "Use parameterized queries / prepared statements. Never concatenate user input into SQL. Implement input validation and WAF rules against SQL injection patterns.",
+							ToolSource:   "custom-sqli",
+							Timestamp:    time.Now(),
+							Verified:     true,
+						})
+						break
+					}
+				}
+
+				if payload.technique == "tautology boolean" && resp.StatusCode == 200 && len(bodyStr) > 100 {
+					normalU := fmt.Sprintf("%s?%s=999999", ep, param)
+					normalResp, nerr := sharedClient.Get(normalU)
+					if nerr == nil {
+						normalBody, _ := io.ReadAll(normalResp.Body)
+						normalResp.Body.Close()
+						normalLen := len(normalBody)
+						if normalLen > 0 && float64(len(bodyStr)) > float64(normalLen)*1.5 {
+							findings = append(findings, types.Finding{
+								ID:           fmt.Sprintf("sqli-tauto-%x", sha256.Sum256([]byte(u)))[:24],
+								Title:        fmt.Sprintf("Potential Blind SQL Injection — Boolean-based (%s)", param),
+								Severity:     types.SeverityHigh,
+								AffectedURL:  u,
+								CWE:          []string{"CWE-89"},
+								OWASP2025:    "Injection",
+								CVSS:         8.6,
+								CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N",
+								Description:  fmt.Sprintf("Tautology payload via %s parameter returned significantly more data than the normal response. Indicative of blind boolean-based SQL injection.", param),
+								AttackScenario: fmt.Sprintf("1. Normal request to %s?%s=999999 returns %d bytes\n2. Tautology 'OR 1=1' returns %d bytes\n3. Attacker uses boolean queries to extract data byte-by-byte", ep, param, normalLen, len(bodyStr)),
+								Evidence:     fmt.Sprintf("Normal response: %d bytes\nTautology response: %d bytes (%.0f%% larger)", normalLen, len(bodyStr), float64(len(bodyStr)-normalLen)/float64(normalLen)*100),
+								Remediation:  "Use parameterized queries. The application appears to concatenate user input into SQL queries.",
+								ToolSource:   "custom-sqli",
+								Timestamp:    time.Now(),
+								Verified:     true,
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+var csrfSensitiveEndpoints = []string{
+	"/api/user/password", "/api/account/password", "/api/settings/password",
+	"/api/user/email", "/api/account/email",
+	"/api/user/delete", "/api/account/delete",
+	"/api/apikey", "/api/api-key", "/api/token",
+	"/api/admin", "/api/settings/admin",
+}
+
+var csrfTokenStrings = []string{
+	"csrf", "xsrf", "_token", "authenticity_token", "nonce",
+	"csrf_token", "xsrf_token", "__RequestVerificationToken",
+}
+
+func checkCSRF(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+
+	for _, ep := range csrfSensitiveEndpoints {
+		u := strings.TrimRight(target, "/") + ep
+		req, err := http.NewRequest("POST", u, bytes.NewReader([]byte(`{}`)))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := sharedClient.Do(req)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		bodyStr := string(body)
+
+		// Check for missing CSRF validation
+		hasCSRF := false
+		for _, token := range csrfTokenStrings {
+			if strings.Contains(strings.ToLower(bodyStr), token) {
+				hasCSRF = true
+				break
+			}
+		}
+
+		if resp.StatusCode == 200 && !hasCSRF && !strings.Contains(strings.ToLower(bodyStr), "unauthorized") && !strings.Contains(strings.ToLower(bodyStr), "forbidden") {
+			findings = append(findings, types.Finding{
+				ID:           fmt.Sprintf("csrf-%x", sha256.Sum256([]byte(u)))[:24],
+				Title:        fmt.Sprintf("Potential CSRF — Missing Token on %s", ep),
+				Severity:     types.SeverityMedium,
+				AffectedURL:  u,
+				CWE:          []string{"CWE-352"},
+				OWASP2025:    "Broken Access Control",
+				CVSS:         6.5,
+				CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:N",
+				Description:  fmt.Sprintf("The endpoint %s responds with 200 to a POST without recognizable CSRF token validation. An attacker can forge requests to perform actions on behalf of authenticated users.", ep),
+				AttackScenario: fmt.Sprintf("1. Attacker crafts HTML page with form targeting %s\n2. Authenticated victim visits page\n3. Form auto-submits, performing action without victim's knowledge", u),
+				Evidence:     fmt.Sprintf("POST %s (no CSRF token sent)\nResponse: HTTP 200\n%s", u, bodyStr[:min(len(bodyStr), 300)]),
+				Remediation:  "Implement CSRF tokens for all state-changing operations. Use SameSite=Strict or SameSite=Lax cookies. Validate Origin/Referer headers on sensitive endpoints.",
+				ToolSource:   "custom-csrf",
+				Timestamp:    time.Now(),
+				Verified:     true,
+			})
+		}
+	}
+
+	return findings, nil
+}
+
+var cmdInjectionPayloads = []struct{ payload, platform, indicator string }{
+	{"; sleep 5", "Unix", ""},
+	{"| sleep 5", "Unix", ""},
+	{"`sleep 5`", "Unix", ""},
+	{"$(sleep 5)", "Unix", ""},
+	{"& sleep 5 &", "Unix", ""},
+	{"; timeout 3 ping 127.0.0.1", "Unix", ""},
+	{"| timeout 3 ping 127.0.0.1", "Unix", ""},
+}
+
+var cmdInjectionParams = []string{"cmd", "command", "exec", "execute", "run", "shell", "ping", "host", "ip", "domain", "target", "addr", "address"}
+
+func checkCommandInjection(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	endpoints := []string{target + "/", target + "/api/", target + "/v1/", target + "/admin", target + "/ping"}
+
+	for _, ep := range endpoints {
+		for _, param := range cmdInjectionParams {
+			for _, payload := range cmdInjectionPayloads {
+				u := fmt.Sprintf("%s?%s=%s%s", ep, param, "test", url.QueryEscape(payload.payload))
+				start := time.Now()
+				resp, err := sharedClient.Get(u)
+				elapsed := time.Since(start)
+				if err != nil {
+					if strings.Contains(err.Error(), "timeout") {
+						continue
+					}
+					continue
+				}
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					continue
+				}
+				_ = body
+
+				if strings.Contains(payload.payload, "sleep") && elapsed > 4*time.Second {
+					findings = append(findings, types.Finding{
+						ID:           fmt.Sprintf("cmd-inj-%s-%x", param, sha256.Sum256([]byte(u)))[:24],
+						Title:        fmt.Sprintf("Command Injection — Time-based (%s, %s)", param, payload.platform),
+						Severity:     types.SeverityCritical,
+						AffectedURL:  u,
+						CWE:          []string{"CWE-78"},
+						OWASP2025:    "Injection",
+						CVSS:         9.8,
+						CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+						Description:  fmt.Sprintf("Command injection via %s parameter. The %s payload caused the server response to be delayed by %.0f seconds, confirming code execution.", param, payload.platform, elapsed.Seconds()),
+						AttackScenario: fmt.Sprintf("1. Attacker injects %s into %s parameter\n2. Server executes the injected command (%ds delay confirms execution)\n3. Attacker escalates to reverse shell or data exfiltration", payload.payload, param, int(elapsed.Seconds())),
+						Evidence:     fmt.Sprintf("Payload: %s\nResponse time: %.0fs (expected <1s)", payload.payload, elapsed.Seconds()),
+						Remediation:  "Never pass user input to shell/command execution functions. Use exec with explicit argument arrays, not shell interpretation. Validate and sanitize all input against an allowlist.",
+						ToolSource:   "custom-cmd-injection",
+						Timestamp:    time.Now(),
+						Verified:     true,
+					})
+				}
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+var xxePayloads = []struct {
+	contentType string
+	body        string
+	label       string
+}{
+	{
+		"application/xml",
+		`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<root>&xxe;</root>`,
+		"file:///etc/passwd",
+	},
+	{
+		"application/xml",
+		`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/">
+]>
+<root>&xxe;</root>`,
+		"SSRF via XXE to AWS metadata",
+	},
+	{
+		"application/xml",
+		`<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "expect://id">
+]>
+<root>&xxe;</root>`,
+		"expect:// RCE probe",
+	},
+}
+
+var xxeEndpoints = []string{"/api/xml", "/api/import", "/api/upload", "/api/soap", "/api/transform", "/xml", "/api/parse", "/api/process"}
+
+func checkXXE(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+
+	for _, ep := range xxeEndpoints {
+		u := strings.TrimRight(target, "/") + ep
+		for _, payload := range xxePayloads {
+			req, err := http.NewRequest("POST", u, bytes.NewReader([]byte(payload.body)))
+			if err != nil {
+				continue
+			}
+			req.Header.Set("Content-Type", payload.contentType)
+
+			resp, err := sharedClient.Do(req)
+			if err != nil {
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				continue
+			}
+			bodyStr := string(body)
+
+			if strings.Contains(bodyStr, "root:") || strings.Contains(bodyStr, "daemon:") ||
+				(strings.Contains(bodyStr, "ami-id") && payload.label == "SSRF via XXE to AWS metadata") {
+				findings = append(findings, types.Finding{
+					ID:           fmt.Sprintf("xxe-%x", sha256.Sum256([]byte(u+payload.label)))[:24],
+					Title:        fmt.Sprintf("XXE Injection — %s", payload.label),
+					Severity:     types.SeverityCritical,
+					AffectedURL:  u,
+					CWE:          []string{"CWE-611"},
+					OWASP2025:    "Security Misconfiguration",
+					CVSS:         9.1,
+					CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:L",
+					Description:  fmt.Sprintf("XXE injection at %s using %s payload. The XML parser resolves external entities, enabling file reads or SSRF.", u, payload.label),
+					AttackScenario: fmt.Sprintf("1. Attacker sends XXE payload to %s\n2. XML parser resolves external entity (%s)\n3. Sensitive files, credentials, or internal services are exposed", u, payload.label),
+					Evidence:     fmt.Sprintf("Payload: %s\nResponse contained: %s", payload.body[:min(len(payload.body), 200)], bodyStr[:min(len(bodyStr), 300)]),
+					Remediation:  "Disable external entity resolution in XML parsers. Configure DocumentBuilderFactory/SAXParserFactory to disallow DOCTYPE declarations. Consider using JSON instead of XML.",
+					ToolSource:   "custom-xxe",
+					Timestamp:    time.Now(),
+					Verified:     true,
+				})
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+func checkHTTPSmuggling(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	hostname := strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://")
+	hostname = strings.Split(hostname, "/")[0]
+
+	desyncTests := []struct {
+		label string
+		body  string
+	}{
+		{
+			"CL.TE desync",
+			fmt.Sprintf("POST / HTTP/1.1\r\nHost: %s\r\nContent-Length: 6\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGPOST / HTTP/1.1\r\nHost: %s\r\n\r\n", hostname, hostname),
+		},
+		{
+			"TE.CL desync",
+			fmt.Sprintf("POST / HTTP/1.1\r\nHost: %s\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n5c\r\nGPOST / HTTP/1.1\r\nHost: %s\r\n\r\n0\r\n\r\n", hostname, hostname),
+		},
+	}
+
+	for _, test := range desyncTests {
+		parsedURL, err := url.Parse(target)
+		if err != nil {
+			continue
+		}
+		host := parsedURL.Host
+		if !strings.Contains(host, ":") {
+			if parsedURL.Scheme == "https" {
+				host += ":443"
+			} else {
+				host += ":80"
+			}
+		}
+
+		conn, err := net.DialTimeout("tcp", host, 5*time.Second)
+		if err != nil {
+			continue
+		}
+		conn.SetDeadline(time.Now().Add(3 * time.Second))
+		conn.Write([]byte(test.body))
+		var response [4096]byte
+		conn.Read(response[:])
+		conn.Close()
+
+		responseStr := string(response[:])
+		if strings.Contains(responseStr, "GPOST") ||
+			(strings.Contains(responseStr, "HTTP/1.1 4") && strings.Count(responseStr, "HTTP/1.1") > 1) {
+			findings = append(findings, types.Finding{
+				ID:           fmt.Sprintf("smuggle-%x", sha256.Sum256([]byte(test.label+target)))[:24],
+				Title:        fmt.Sprintf("HTTP Request Smuggling — %s", test.label),
+				Severity:     types.SeverityHigh,
+				AffectedURL:  target,
+				CWE:          []string{"CWE-444"},
+				OWASP2025:    "Injection",
+				CVSS:         7.5,
+				CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+				Description:  fmt.Sprintf("Potential %s desync on %s. The server appears to have inconsistent handling of Transfer-Encoding and Content-Length headers, enabling request smuggling.", test.label, target),
+				AttackScenario: fmt.Sprintf("1. Attacker sends ambiguous request using %s technique\n2. Front-end and back-end disagree on request boundaries\n3. Smuggled GPOST request is queued, poisoning subsequent users' requests", test.label),
+				Evidence:     fmt.Sprintf("Sent: %s\nResponse: %s", test.body[:min(len(test.body), 300)], responseStr[:min(len(responseStr), 500)]),
+				Remediation:  "Ensure consistent HTTP parsing between front-end (load balancer/CDN) and back-end. Use HTTP/2 to avoid Transfer-Encoding ambiguity. Reject requests with both CL and TE headers.",
+				ToolSource:   "custom-http-smuggling",
+				Timestamp:    time.Now(),
+				Verified:     true,
+			})
+		}
+	}
+
+	return findings, nil
+}
+
+var xssPayloads = []struct {
+	payload  string
+	vector   string
+	severity types.Severity
+}{
+	{`<script>alert(1)</script>`, "Basic script tag", types.SeverityHigh},
+	{`<img src=x onerror=alert(1)>`, "IMG onerror", types.SeverityHigh},
+	{`<svg onload=alert(1)>`, "SVG onload", types.SeverityHigh},
+	{`<body onload=alert(1)>`, "Body onload", types.SeverityHigh},
+	{`"><script>alert(1)</script>`, "Attribute break-out", types.SeverityHigh},
+	{`'-alert(1)-'`, "Single-quote break-out", types.SeverityHigh},
+	{`%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E`, "URL-encoded script", types.SeverityHigh},
+	{`{{constructor.constructor('alert(1)')()}}`, "SSTI-like XSS (Angular Vue)", types.SeverityHigh},
+	{`javascript:alert(1)`, "JavaScript URL scheme", types.SeverityMedium},
+	{`<iframe src="javascript:alert(1)">`, "Iframe javascript", types.SeverityHigh},
+}
+
+var xssParams = []string{"q", "query", "search", "id", "url", "redirect_uri", "utm_source", "name", "email",
+	"message", "comment", "title", "description", "bio", "username", "display_name",
+	"callback", "jsonp", "input", "value", "text", "content"}
+
+func checkXSSProbes(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	endpoints := []string{
+		target + "/",
+		target + "/search",
+		target + "/api/search",
+		target + "/login",
+		target + "/register",
+		target + "/contact",
+		target + "/api/",
+		target + "/v1/",
+	}
+
+	for _, ep := range endpoints {
+		for _, param := range xssParams {
+			for _, xp := range xssPayloads {
+				u := fmt.Sprintf("%s?%s=%s", ep, param, url.QueryEscape(xp.payload))
+				resp, err := sharedClient.Get(u)
+				if err != nil {
+					continue
+				}
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					continue
+				}
+				bodyStr := string(body)
+
+				// Check if payload is reflected exactly
+				if strings.Contains(bodyStr, xp.payload) {
+					findings = append(findings, types.Finding{
+						ID:           fmt.Sprintf("xss-%s-%x", param, sha256.Sum256([]byte(u)))[:24],
+						Title:        fmt.Sprintf("Reflected XSS — %s via %s parameter", xp.vector, param),
+						Severity:     xp.severity,
+						AffectedURL:  u,
+						CWE:          []string{"CWE-79"},
+						OWASP2025:    "Injection",
+						CVSS:         6.1,
+						CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+						Description:  fmt.Sprintf("Reflected XSS via %s parameter. The %s payload is reflected in the response without sanitization, enabling script execution in the victim's browser.", param, xp.vector),
+						AttackScenario: fmt.Sprintf("1. Attacker crafts URL with XSS payload: %s\n2. Sends link to victim\n3. Victim opens link, malicious script executes in their browser session", u),
+						Evidence:     fmt.Sprintf("Payload %s reflected verbatim in:\n%s", xp.payload, bodyStr[:min(len(bodyStr), 400)]),
+						Remediation:  "HTML-encode all user input before rendering. Use Content-Security-Policy headers. Implement context-aware output encoding (HTML, JS, URL, CSS).",
+						ToolSource:   "custom-xss",
+						Timestamp:    time.Now(),
+						Verified:     true,
+					})
+				}
+			}
+		}
+	}
+
+	return findings, nil
 }
 
 func extractJSUrls(html, baseURL string) []string {

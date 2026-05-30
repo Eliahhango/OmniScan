@@ -66,8 +66,6 @@ type FindingMsg struct {
 	Finding types.Finding
 }
 
-type ScanCompleteMsg struct{}
-
 type realScanMsg struct {
 	duration time.Duration
 	count    int
@@ -265,12 +263,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		pCmd := a.scanProgress.SetPercent(msg.progress)
 		cmds = append(cmds, pCmd)
-
-	case ScanCompleteMsg:
-		a.scanDuration = time.Since(a.scanStartTime)
-		a.status = "COMPLETED"
-		a.AddLog(fmt.Sprintf("Scan completed in %s", a.scanDuration))
-		cmds = append(cmds, a.scanProgress.SetPercent(1.0))
 
 	case realScanMsg:
 		a.scanDuration = time.Since(a.scanStartTime)

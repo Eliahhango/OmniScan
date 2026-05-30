@@ -711,10 +711,9 @@ func checkCachePoisoning(target string) ([]types.Finding, error) {
 	}
 
 	poisonHeaders := map[string]string{
-		"X-Original-URL":          "/admin",
-		"X-Rewrite-URL":           "/admin",
-		"X-HTTP-Method-Override":  "GET",
-		"X-Forwarded-Host":        "evil.com",
+		"X-Original-URL":         "/admin",
+		"X-Rewrite-URL":          "/admin",
+		"X-HTTP-Method-Override": "GET",
 	}
 	for header, value := range poisonHeaders {
 		req2, err := http.NewRequest("GET", target, nil)

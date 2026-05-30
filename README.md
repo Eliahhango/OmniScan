@@ -35,9 +35,9 @@ docker build -t omniscan:latest .
 docker run -it omniscan:latest tui
 ```
 
-### One-liner (Linux/macOS)
+### One-command installer (Linux)
 ```bash
-curl -sfL https://raw.githubusercontent.com/Eliahhango/OmniScan/main/install.sh | sh
+curl -sL https://raw.githubusercontent.com/Eliahhango/OmniScan/master/install.sh | sudo bash
 ```
 
 ## Quick Start

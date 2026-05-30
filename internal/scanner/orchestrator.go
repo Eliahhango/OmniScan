@@ -29,6 +29,7 @@ type Orchestrator struct {
 	epssClient *EPSSClient
 	reconCache *recon.ResultCache
 	webhook    *webhook.Client
+	wg         sync.WaitGroup
 }
 
 type OrchestratorConfig struct {
@@ -72,11 +73,6 @@ func (o *Orchestrator) Errors() <-chan error {
 }
 
 func (o *Orchestrator) Run(ctx context.Context) error {
-	defer func() {
-		close(o.results)
-		close(o.errors)
-	}()
-
 	scanID, err := o.db.CreateScan(o.cfg.Target, o.cfg.Scope)
 	if err != nil {
 		return fmt.Errorf("create scan: %w", err)
@@ -131,6 +127,10 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.pipeline.Progress = 100
 
 	o.db.UpdateScanStatus(scanID, "completed")
+
+	o.wg.Wait()
+	close(o.results)
+	close(o.errors)
 	return nil
 }
 
@@ -325,8 +325,10 @@ func (o *Orchestrator) activeTargets() []string {
 func (o *Orchestrator) sendResult(finding types.Finding) {
 	normalizer.EnrichWithOWASP2025(&finding)
 	if finding.CVE != "" {
-		if score, _ := o.epssClient.GetEPSS(finding.CVE); score > 0 {
+		if score := o.epssClient.GetCachedEPSS(finding.CVE); score > 0 {
 			finding.EPSS = score
+		} else {
+			go o.epssClient.GetEPSS(finding.CVE)
 		}
 	}
 	if o.webhook != nil && o.webhook.ShouldSend(finding) {
@@ -340,7 +342,9 @@ func (o *Orchestrator) sendResult(finding types.Finding) {
 
 func (o *Orchestrator) enrichResults(ctx context.Context) chan types.Finding {
 	ch := make(chan types.Finding, 1000)
+	o.wg.Add(1)
 	go func() {
+		defer o.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():

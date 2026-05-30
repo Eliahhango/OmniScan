@@ -361,23 +361,19 @@ func (a *App) runOrchInBackground() {
 		}
 	}()
 
-	resultsDone := false
-	errorsDone := false
-	for !resultsDone || !errorsDone {
+loop:
+	for {
 		select {
 		case <-a.orchCtx.Done():
-			resultsDone = true
-			errorsDone = true
+			break loop
 		case finding, ok := <-a.orch.Results():
 			if !ok {
-				resultsDone = true
-				break
+				break loop
 			}
 			a.program.Send(FindingMsg{Finding: finding})
 		case err, ok := <-a.orch.Errors():
 			if !ok {
-				errorsDone = true
-				break
+				break loop
 			}
 			a.program.Send(StatusMsg{
 				Message: fmt.Sprintf("Error: %v", err),

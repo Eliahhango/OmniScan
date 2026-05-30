@@ -86,6 +86,12 @@ func (c *EPSSClient) GetEPSS(cve string) (float64, error) {
 	return score, nil
 }
 
+func (c *EPSSClient) GetCachedEPSS(cve string) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cache[cve]
+}
+
 func (c *EPSSClient) GetEPSSBatch(cves []string) (map[string]float64, error) {
 	if len(cves) == 0 {
 		return nil, nil

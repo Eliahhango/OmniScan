@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -117,6 +118,26 @@ var CustomChecks = []CustomCheck{
 		Name:        "account-takeover",
 		Description: "Account takeover vectors",
 		Check:       checkAccountTakeover,
+	},
+	{
+		Name:        "dns-records",
+		Description: "DNS record enumeration (A, AAAA, MX, NS, TXT)",
+		Check:       checkDNS,
+	},
+	{
+		Name:        "security-headers",
+		Description: "HTTP security headers audit",
+		Check:       checkSecurityHeaders,
+	},
+	{
+		Name:        "port-scan",
+		Description: "Quick TCP port scan (common ports)",
+		Check:       checkPorts,
+	},
+	{
+		Name:        "js-secrets",
+		Description: "Scan JavaScript files for exposed secrets",
+		Check:       checkJSSecrets,
 	},
 }
 
@@ -769,4 +790,283 @@ func checkAccountTakeover(target string) ([]types.Finding, error) {
 	}
 
 	return findings, nil
+}
+
+func checkDNS(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	host := strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://")
+	host = strings.Split(host, "/")[0]
+	host = strings.Split(host, ":")[0]
+
+	if ips, err := net.LookupHost(host); err == nil && len(ips) > 0 {
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("dns-a-%s", host),
+			Title:       "DNS Records Found",
+			Description: fmt.Sprintf("Resolved %s to %d IP addresses: %s", host, len(ips), strings.Join(ips, ", ")),
+			Severity:    types.SeverityInfo,
+			AffectedURL: target,
+			ToolSource:  "custom-dns",
+			Timestamp:   time.Now(),
+		})
+	}
+
+	if mx, err := net.LookupMX(host); err == nil && len(mx) > 0 {
+		mxStr := make([]string, len(mx))
+		for i, m := range mx {
+			mxStr[i] = fmt.Sprintf("%d %s", m.Pref, m.Host)
+		}
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("dns-mx-%s", host),
+			Title:       "Mail Exchanger Records",
+			Description: fmt.Sprintf("MX records for %s: %s", host, strings.Join(mxStr, "; ")),
+			Severity:    types.SeverityInfo,
+			AffectedURL: target,
+			ToolSource:  "custom-dns",
+			Timestamp:   time.Now(),
+		})
+	}
+
+	if ns, err := net.LookupNS(host); err == nil && len(ns) > 0 {
+		nsStr := make([]string, len(ns))
+		for i, n := range ns {
+			nsStr[i] = n.Host
+		}
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("dns-ns-%s", host),
+			Title:       "Name Server Records",
+			Description: fmt.Sprintf("NS records for %s: %s", host, strings.Join(nsStr, "; ")),
+			Severity:    types.SeverityInfo,
+			AffectedURL: target,
+			ToolSource:  "custom-dns",
+			Timestamp:   time.Now(),
+		})
+	}
+
+	if txt, err := net.LookupTXT(host); err == nil && len(txt) > 0 {
+		txtStr := strings.Join(txt, "; ")
+		if len(txtStr) > 500 {
+			txtStr = txtStr[:500] + "..."
+		}
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("dns-txt-%s", host),
+			Title:       "TXT Records",
+			Description: fmt.Sprintf("TXT records for %s: %s", host, txtStr),
+			Severity:    types.SeverityInfo,
+			AffectedURL: target,
+			ToolSource:  "custom-dns",
+			Timestamp:   time.Now(),
+		})
+	}
+
+	return findings, nil
+}
+
+func checkSecurityHeaders(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil }}
+	resp, err := client.Get(target)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	securityHeaders := map[string]struct {
+		Name        string
+		Description string
+		Severity    types.Severity
+	}{
+		"Content-Security-Policy":           {"Missing CSP", "No Content-Security-Policy — vulnerable to XSS and data injection", types.SeverityHigh},
+		"Strict-Transport-Security":         {"Missing HSTS", "No Strict-Transport-Security — no HTTPS enforcement", types.SeverityHigh},
+		"X-Frame-Options":                   {"Missing X-Frame-Options", "No X-Frame-Options — clickjacking risk", types.SeverityMedium},
+		"X-Content-Type-Options":            {"Missing X-Content-Type-Options", "No X-Content-Type-Options — MIME-sniffing risk", types.SeverityMedium},
+		"Referrer-Policy":                   {"Missing Referrer-Policy", "No Referrer-Policy — referrer leakage risk", types.SeverityLow},
+		"Permissions-Policy":                {"Missing Permissions-Policy", "No Permissions-Policy — feature permissions unconstrained", types.SeverityLow},
+		"X-XSS-Protection":                  {"Missing X-XSS-Protection", "No X-XSS-Protection header", types.SeverityLow},
+	}
+
+	presentHeaders := 0
+	for header, info := range securityHeaders {
+		if resp.Header.Get(header) != "" {
+			presentHeaders++
+			continue
+		}
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("sec-header-%s", strings.ToLower(header)),
+			Title:       info.Name,
+			Description: info.Description,
+			Severity:    info.Severity,
+			AffectedURL: target,
+			Remediation: fmt.Sprintf("Set the %s header in your server configuration", header),
+			ToolSource:  "custom-headers",
+			Timestamp:   time.Now(),
+		})
+	}
+
+	totalHeaders := len(securityHeaders)
+	findings = append(findings, types.Finding{
+		ID:          fmt.Sprintf("sec-header-summary-%s", strings.ReplaceAll(target, "/", "_")),
+		Title:       "Security Headers Summary",
+		Description: fmt.Sprintf("%d/%d security headers present", presentHeaders, totalHeaders),
+		Severity:    types.SeverityInfo,
+		AffectedURL: target,
+		ToolSource:  "custom-headers",
+		Timestamp:   time.Now(),
+	})
+
+	return findings, nil
+}
+
+func checkPorts(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	host := strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://")
+	host = strings.Split(host, "/")[0]
+	host = strings.Split(host, ":")[0]
+
+	ports := []struct {
+		port int
+		name string
+	}{
+		{21, "FTP"}, {22, "SSH"}, {23, "Telnet"}, {25, "SMTP"},
+		{53, "DNS"}, {80, "HTTP"}, {110, "POP3"}, {143, "IMAP"},
+		{443, "HTTPS"}, {465, "SMTPS"}, {587, "SMTP Submission"},
+		{993, "IMAPS"}, {995, "POP3S"}, {1433, "MSSQL"},
+		{1521, "Oracle DB"}, {2049, "NFS"}, {3306, "MySQL"},
+		{3389, "RDP"}, {5432, "PostgreSQL"}, {5900, "VNC"},
+		{6379, "Redis"}, {8080, "HTTP-Alt"}, {8443, "HTTPS-Alt"},
+		{9090, "HTTP-Alt2"}, {27017, "MongoDB"},
+	}
+
+	var open []string
+	for _, p := range ports {
+		addr := net.JoinHostPort(host, fmt.Sprintf("%d", p.port))
+		conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+		if err != nil {
+			continue
+		}
+		conn.Close()
+		open = append(open, fmt.Sprintf(":%d (%s)", p.port, p.name))
+	}
+
+	if len(open) > 0 {
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("ports-%s", host),
+			Title:       "Open Ports Detected",
+			Description: fmt.Sprintf("%d open ports: %s", len(open), strings.Join(open, ", ")),
+			Severity:    types.SeverityInfo,
+			AffectedURL: target,
+			ToolSource:  "custom-ports",
+			Timestamp:   time.Now(),
+		})
+	}
+
+	return findings, nil
+}
+
+func checkJSSecrets(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil }}
+
+	resp, err := client.Get(target)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	jsFiles := extractJSUrls(string(body), target)
+	seen := make(map[string]bool)
+
+	patterns := []struct {
+		name     string
+		pattern  string
+		severity types.Severity
+	}{
+		{"Google API Key", `AIza[0-9A-Za-z\-_]{35}`, types.SeverityHigh},
+		{"AWS Access Key", `AKIA[0-9A-Z]{16}`, types.SeverityHigh},
+		{"AWS Secret Key", `(?i)aws(.{0,20})?(?-i)['\"][0-9a-zA-Z\/+]{40}['\"]`, types.SeverityHigh},
+		{"Slack Token", `xox[baprs]-[0-9a-zA-Z\-]{10,48}`, types.SeverityHigh},
+		{"GitHub Token", `gh[pousr]_[A-Za-z0-9_]{36,255}`, types.SeverityHigh},
+		{"Generic API Key", `(?i)(api[_-]?key|apikey|api[_-]?secret)[\s"':=]+[A-Za-z0-9_\-]{16,64}`, types.SeverityMedium},
+		{"Password in JS", `(?i)(password|passwd|pwd)[\s"':=]+[^\s"']{8,50}`, types.SeverityCritical},
+		{"JWT Token", `eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}`, types.SeverityMedium},
+		{"Firebase URL", `[a-z0-9\-]{3,40}\.firebaseio\.com`, types.SeverityMedium},
+		{"Private Key", `-----BEGIN (RSA |EC )?PRIVATE KEY-----`, types.SeverityCritical},
+		{"Heroku API Key", `[hH][eR][rR][oO][kK][uU].*[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}`, types.SeverityHigh},
+	}
+
+	for _, jsURL := range jsFiles {
+		if seen[jsURL] {
+			continue
+		}
+		seen[jsURL] = true
+
+		jsResp, err := client.Get(jsURL)
+		if err != nil {
+			continue
+		}
+		jsBody, err := io.ReadAll(jsResp.Body)
+		jsResp.Body.Close()
+		if err != nil {
+			continue
+		}
+
+		jsContent := string(jsBody)
+		for _, p := range patterns {
+			re := regexp.MustCompile(p.pattern)
+			matches := re.FindAllString(jsContent, -1)
+			dedup := make(map[string]bool)
+			for _, m := range matches {
+				if dedup[m] {
+					continue
+				}
+				dedup[m] = true
+				redacted := m
+				if len(redacted) > 12 {
+					redacted = redacted[:6] + "•••" + redacted[len(redacted)-4:]
+				}
+				findings = append(findings, types.Finding{
+					ID:          fmt.Sprintf("js-secret-%x", []byte(m)),
+					Title:       fmt.Sprintf("%s Exposed", p.name),
+					Description: fmt.Sprintf("%s found in %s", p.name, jsURL),
+					Severity:    p.severity,
+					AffectedURL: jsURL,
+					Proof:       redacted,
+					Remediation: "Rotate the exposed credential and remove it from client-side code",
+					ToolSource:  "custom-jssecrets",
+					Timestamp:   time.Now(),
+				})
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+func extractJSUrls(html, baseURL string) []string {
+	re := regexp.MustCompile(`<script[^>]*src\s*=\s*["']([^"']+)["']`)
+	matches := re.FindAllStringSubmatch(html, -1)
+	var urls []string
+	seen := make(map[string]bool)
+	for _, m := range matches {
+		u := m[1]
+		switch {
+		case strings.HasPrefix(u, "//"):
+			u = "https:" + u
+		case strings.HasPrefix(u, "/"):
+			base := strings.TrimRight(baseURL, "/")
+			u = base + u
+		case !strings.HasPrefix(u, "http"):
+			base := strings.TrimRight(baseURL, "/")
+			u = base + "/" + u
+		}
+		if !seen[u] {
+			seen[u] = true
+			urls = append(urls, u)
+		}
+	}
+	return urls
 }

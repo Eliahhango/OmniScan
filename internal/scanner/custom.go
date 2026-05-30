@@ -560,11 +560,15 @@ func checkWebSocket(target string) ([]types.Finding, error) {
 
 func checkCachePoisoning(target string) ([]types.Finding, error) {
 	var findings []types.Finding
+	target = ensureURL(target)
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	maliciousHost := "evil.com"
 
-	req, _ := http.NewRequest("GET", target, nil)
+	req, err := http.NewRequest("GET", target, nil)
+	if err != nil || req == nil {
+		return findings, nil
+	}
 	req.Header.Set("X-Forwarded-Host", maliciousHost)
 	req.Header.Set("X-Forwarded-Scheme", "https")
 
@@ -619,6 +623,7 @@ func checkCachePoisoning(target string) ([]types.Finding, error) {
 
 func checkPrototypePollution(target string) ([]types.Finding, error) {
 	var findings []types.Finding
+	target = ensureURL(target)
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	payloads := []string{
@@ -654,6 +659,7 @@ func checkPrototypePollution(target string) ([]types.Finding, error) {
 
 func checkHostHeaderInjection(target string) ([]types.Finding, error) {
 	var findings []types.Finding
+	target = ensureURL(target)
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -661,10 +667,12 @@ func checkHostHeaderInjection(target string) ([]types.Finding, error) {
 		},
 	}
 
-	maliciousHosts := []string{"evil.com", "127.0.0.1", "localhost", "0.0.0.0"}
-
+	maliciousHosts := []string{"evil.com", "target.com", "127.0.0.1"}	
 	for _, host := range maliciousHosts {
-		req, _ := http.NewRequest("GET", target, nil)
+		req, err := http.NewRequest("GET", target, nil)
+		if err != nil || req == nil {
+			continue
+		}
 		req.Host = host
 
 		resp, err := client.Do(req)
@@ -866,8 +874,16 @@ func checkDNS(target string) ([]types.Finding, error) {
 	return findings, nil
 }
 
+func ensureURL(target string) string {
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		return target
+	}
+	return "https://" + target
+}
+
 func checkSecurityHeaders(target string) ([]types.Finding, error) {
 	var findings []types.Finding
+	target = ensureURL(target)
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil }}
 	resp, err := client.Get(target)
 	if err != nil {
@@ -969,6 +985,7 @@ func checkPorts(target string) ([]types.Finding, error) {
 
 func checkJSSecrets(target string) ([]types.Finding, error) {
 	var findings []types.Finding
+	target = ensureURL(target)
 	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil }}
 
 	resp, err := client.Get(target)

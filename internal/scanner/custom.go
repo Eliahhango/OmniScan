@@ -1692,7 +1692,7 @@ var errorPatterns = []struct {
 	{regexp.MustCompile(`(?i)(Fatal error|Uncaught exception|Exception in|Parse error|syntax error, unexpected)`) , "Fatal Error", types.SeverityMedium},
 	{regexp.MustCompile(`(?i)(at\s+[\w.<>]+\.[\w<>]+\([\w.]+:\d+\)|File\s+"[^"]+",\s+line\s+\d+)`) , "Source Path in Error", types.SeverityLow},
 	{regexp.MustCompile(`(?i)(DEBUG|Debug mode|debug=true|environment.*development)`) , "Debug Information", types.SeverityLow},
-	{regexp.MustCompile(`(?i)(phpinfo|PHP Version|SERVER\["`), "PHP Info Leak", types.SeverityMedium},
+	{regexp.MustCompile(`(?i)(phpinfo|PHP Version|SERVER\[")`), "PHP Info Leak", types.SeverityMedium},
 	{regexp.MustCompile(`(?i)(version.*\d+\.\d+\.\d+|server:\s+apache|server:\s+nginx|server:\s+microsoft-iis|x-powered-by)`) , "Server Version Disclosure", types.SeverityLow},
 }
 

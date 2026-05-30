@@ -69,7 +69,7 @@ const htmlTemplate = `<!DOCTYPE html>
   <p class="meta"><strong>Prepared By:</strong> {{.PreparedBy}}</p>
   <p class="meta"><strong>Report Status:</strong> {{.ReportStatus}}</p>
   <p class="meta"><strong>Version:</strong> OmniScan {{.Version}}</p>
-  <div style="margin-top:20px"><span class="risk-badge risk-{{lower .RiskLabel}}">{{.RiskLabel}}</span></div>
+  <div style="margin-top:20px"><span class="risk-badge {{.RiskClass}}">{{.RiskLabel}}</span></div>
 </div>
 
 <!-- TOC -->
@@ -212,16 +212,20 @@ Low     │  MED   │  LOW   │  INFO
 <h3>4.2 OWASP Top 10:2025 Mapping</h3>
 <table>
   <tr><th>Finding</th><th>OWASP Category</th></tr>
-  {{range .VulnFindings}}{{if .OWASP2025}}<tr><td>{{.Title}}</td><td>{{.OWASP2025}}</td></tr>{{end}}{{end}}
+  {{range .VulnFindings}}{{if .OWASP2025}}<tr><td>{{trimPrefix .Title "Missing "}}</td><td>{{.OWASP2025}}</td></tr>{{end}}{{end}}
 </table>
+{{else}}
+<p>No OWASP categories were mapped in this assessment.</p>
 {{end}}
 
 {{if gt .CWECount 0}}
 <h3>4.3 CWE Mapping</h3>
 <table>
   <tr><th>Finding</th><th>CWE</th></tr>
-  {{range .VulnFindings}}{{if .CWE}}<tr><td>{{.Title}}</td><td>{{index .CWE 0}}</td></tr>{{end}}{{end}}
+  {{range .VulnFindings}}{{if .CWE}}<tr><td>{{trimPrefix .Title "Missing "}}</td><td>{{index .CWE 0}}</td></tr>{{end}}{{end}}
 </table>
+{{else}}
+<p>No CWE mappings were established in this assessment.</p>
 {{end}}
 {{else}}
 <p>No vulnerabilities were identified during this assessment.</p>
@@ -344,12 +348,12 @@ Low     │  MED   │  LOW   │  INFO
   <tr><th>Engine</th><th>Status</th><th>Notes</th></tr>
   {{range .EngineStatus}}<tr>
     <td>{{.Name}}</td>
-    <td>{{if eq .Status "Active"}}<span class="badge badge-active">✅ Active</span>{{else}}<span class="badge badge-unavailable">❌ Not Available</span>{{end}}</td>
+    <td>{{if eq .Status "Active"}}<span class="badge badge-active">Active</span>{{else}}<span class="badge badge-unavailable">Not Available</span>{{end}}</td>
     <td>{{.Notes}}</td>
   </tr>{{end}}
 </table>
 {{if .CoverageWarning}}
-<div class="warning">⚠ <strong>Coverage Warning:</strong> {{.CoverageWarning}}</div>
+<div class="warning"><strong>Coverage Warning:</strong> {{.CoverageWarning}}</div>
 {{end}}
 {{end}}
 

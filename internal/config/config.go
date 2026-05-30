@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -9,22 +11,22 @@ import (
 )
 
 type Config struct {
-	DBPath      string     `yaml:"db_path"`
-	Passphrase  string     `yaml:"passphrase"`
-	OutputDir   string     `yaml:"output_dir"`
-	TemplateDir string     `yaml:"template_dir"`
-	ToolsDir    string     `yaml:"tools_dir"`
-	Concurrency int        `yaml:"concurrency"`
-	RateLimit   int        `yaml:"rate_limit"`
+	DBPath      string        `yaml:"db_path"`
+	Passphrase  string        `yaml:"passphrase"`
+	OutputDir   string        `yaml:"output_dir"`
+	TemplateDir string        `yaml:"template_dir"`
+	ToolsDir    string        `yaml:"tools_dir"`
+	Concurrency int           `yaml:"concurrency"`
+	RateLimit   int           `yaml:"rate_limit"`
 	Webhook     WebhookConfig `yaml:"webhook"`
 	Daemon      DaemonConfig  `yaml:"daemon"`
-	Nuclei      ToolConfig `yaml:"nuclei"`
-	ZAP         ToolConfig `yaml:"zap"`
-	Nmap        ToolConfig `yaml:"nmap"`
-	OpenVAS     ToolConfig `yaml:"openvas"`
-	Nikto       ToolConfig `yaml:"nikto"`
-	Semgrep     ToolConfig `yaml:"semgrep"`
-	FFUF        ToolConfig `yaml:"ffuf"`
+	Nuclei      ToolConfig    `yaml:"nuclei"`
+	ZAP         ToolConfig    `yaml:"zap"`
+	Nmap        ToolConfig    `yaml:"nmap"`
+	OpenVAS     ToolConfig    `yaml:"openvas"`
+	Nikto       ToolConfig    `yaml:"nikto"`
+	Semgrep     ToolConfig    `yaml:"semgrep"`
+	FFUF        ToolConfig    `yaml:"ffuf"`
 }
 
 type WebhookConfig struct {
@@ -42,20 +44,33 @@ type ToolConfig struct {
 	Timeout int    `yaml:"timeout"`
 }
 
+func (t *ToolConfig) Validate() error {
+	if t.Timeout <= 0 {
+		return errors.New("tool timeout must be positive")
+	}
+	return nil
+}
+
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Defaults(), nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return Defaults()
+		}
+		return nil, err
 	}
-	cfg := Defaults()
+	cfg, _ := Defaults()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
-func Defaults() *Config {
-	homeDir, _ := os.UserHomeDir()
+func Defaults() (*Config, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "."
+	}
 	omniscanDir := filepath.Join(homeDir, "OmniScan")
 	return &Config{
 		DBPath:      filepath.Join(omniscanDir, "omniscan.db"),
@@ -73,7 +88,33 @@ func Defaults() *Config {
 		Nikto:       ToolConfig{Path: "nikto", Enabled: true, Timeout: 1800},
 		Semgrep:     ToolConfig{Path: "semgrep", Enabled: false, Timeout: 1800},
 		FFUF:        ToolConfig{Path: "ffuf", Enabled: true, Timeout: 1800},
+	}, nil
+}
+
+func (c *Config) EnabledTools() []string {
+	var tools []string
+	if c.Nuclei.Enabled {
+		tools = append(tools, "nuclei")
 	}
+	if c.ZAP.Enabled {
+		tools = append(tools, "zap")
+	}
+	if c.Nmap.Enabled {
+		tools = append(tools, "nmap")
+	}
+	if c.OpenVAS.Enabled {
+		tools = append(tools, "openvas")
+	}
+	if c.Nikto.Enabled {
+		tools = append(tools, "nikto")
+	}
+	if c.Semgrep.Enabled {
+		tools = append(tools, "semgrep")
+	}
+	if c.FFUF.Enabled {
+		tools = append(tools, "ffuf")
+	}
+	return tools
 }
 
 func (c *Config) ToScanConfig(target string) *types.ScanConfig {
@@ -82,5 +123,6 @@ func (c *Config) ToScanConfig(target string) *types.ScanConfig {
 		RateLimit:   c.RateLimit,
 		Concurrency: c.Concurrency,
 		OutputDir:   c.OutputDir,
+		Tools:       c.EnabledTools(),
 	}
 }

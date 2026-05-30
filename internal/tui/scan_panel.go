@@ -33,6 +33,14 @@ func NewScanPanel() *ScanPanel {
 	}
 }
 
+func (s *ScanPanel) Reset() {
+	s.currentStage = 0
+	for i := range s.tools {
+		s.tools[i].Progress = 0
+		s.tools[i].Status = ""
+	}
+}
+
 func (s *ScanPanel) UpdateStage(stage types.ScanStage, tool string, progress float64) {
 	s.currentStage = stage
 	for i, t := range s.tools {

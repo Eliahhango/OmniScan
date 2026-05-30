@@ -127,7 +127,7 @@ func runTUI(configPath string) {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		cfg = config.Defaults()
+		cfg, _ = config.Defaults()
 	}
 
 	store, err := db.New(cfg.DBPath, cfg.Passphrase)
@@ -143,6 +143,8 @@ func runTUI(configPath string) {
 		}
 		orch := scanner.NewOrchestrator(orchCfg, store)
 		app.SetOrchestrator(orch)
+	} else {
+		app.AddLog(fmt.Sprintf("Warning: database unavailable (%v); scanning disabled", err))
 	}
 
 	prog := tea.NewProgram(app, tea.WithAltScreen())
@@ -200,7 +202,7 @@ func runScan(configPath string) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Printf("Warning: could not load config: %v\n", err)
-		cfg = config.Defaults()
+		cfg, _ = config.Defaults()
 	}
 
 	store, err := db.New(cfg.DBPath, cfg.Passphrase)
@@ -285,6 +287,8 @@ func runScan(configPath string) {
 	}()
 
 	if err := orch.Run(ctx); err != nil {
+		cancel()
+		readWg.Wait()
 		if jsonOutput {
 			line, _ := json.Marshal(map[string]string{"error": err.Error()})
 			fmt.Fprintln(os.Stderr, string(line))
@@ -468,7 +472,7 @@ func runDiff() {
 
 	cfg, err := config.Load("omniscan.yaml")
 	if err != nil {
-		cfg = config.Defaults()
+		cfg, _ = config.Defaults()
 	}
 	store, err := db.New(cfg.DBPath, cfg.Passphrase)
 	if err != nil {
@@ -477,11 +481,27 @@ func runDiff() {
 	}
 	defer store.Close()
 
-	s1, _ := store.GetScan(id1)
-	s2, _ := store.GetScan(id2)
+	s1, err := store.GetScan(id1)
+	if err != nil {
+		fmt.Printf("Error fetching scan %d: %v\n", id1, err)
+		os.Exit(1)
+	}
+	s2, err := store.GetScan(id2)
+	if err != nil {
+		fmt.Printf("Error fetching scan %d: %v\n", id2, err)
+		os.Exit(1)
+	}
 
-	f1, _ := store.GetFindings(id1)
-	f2, _ := store.GetFindings(id2)
+	f1, err := store.GetFindings(id1)
+	if err != nil {
+		fmt.Printf("Error fetching findings for scan %d: %v\n", id1, err)
+		os.Exit(1)
+	}
+	f2, err := store.GetFindings(id2)
+	if err != nil {
+		fmt.Printf("Error fetching findings for scan %d: %v\n", id2, err)
+		os.Exit(1)
+	}
 
 	f1set := make(map[string]bool, len(f1))
 	for _, f := range f1 {
@@ -537,7 +557,7 @@ func runDaemon(configPath string) {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		cfg = config.Defaults()
+		cfg, _ = config.Defaults()
 	}
 	if cfg.Daemon.Listen != "" {
 		listen = cfg.Daemon.Listen
@@ -679,7 +699,7 @@ func runBounty(configPath string) {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		cfg = config.Defaults()
+		cfg, _ = config.Defaults()
 	}
 
 	store, err := db.New(cfg.DBPath, cfg.Passphrase)
@@ -699,12 +719,9 @@ func runBounty(configPath string) {
 	}
 
 	orch := scanner.NewOrchestrator(orchCfg, store)
-	scanCfg := &types.ScanConfig{
-		Target: target,
-	}
-	_ = scanCfg
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
 	if err := orch.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Scan failed: %v\n", err)
 		os.Exit(1)

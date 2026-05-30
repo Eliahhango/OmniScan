@@ -207,7 +207,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = msg.Height
 		a.ready = true
 		a.logViewport.Width = msg.Width - 4
-		a.logViewport.Height = 10
+		logHeight := msg.Height / 4
+		if logHeight < 4 {
+			logHeight = 4
+		}
+		if logHeight > 10 {
+			logHeight = 10
+		}
+		a.logViewport.Height = logHeight
 		a.resultsTable.SetWidth(msg.Width - 4)
 
 	case tea.KeyMsg:
@@ -218,13 +225,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch {
 		case key.Matches(msg, a.keys.Quit):
+			a.cancelOrch()
 			return a, tea.Quit
 		case key.Matches(msg, a.keys.TabNext):
 			a.activeTab = (a.activeTab + 1) % len(a.tabNames)
 		case key.Matches(msg, a.keys.TabPrev):
 			a.activeTab = (a.activeTab - 1 + len(a.tabNames)) % len(a.tabNames)
 		case key.Matches(msg, a.keys.Scan):
-			if a.status != "SCANNING" && a.target != "" {
+			if a.status != "SCANNING" && a.target != "" && a.orch != nil && a.program != nil {
 				return a, a.startRealScan()
 			}
 		case key.Matches(msg, a.keys.Export):
@@ -316,20 +324,30 @@ func (a *App) SetProgram(prog *tea.Program) {
 	a.program = prog
 }
 
+func (a *App) cancelOrch() {
+	if a.orchCancel != nil {
+		a.orchCancel()
+	}
+}
+
 func (a *App) startRealScan() tea.Cmd {
+	a.cancelOrch()
 	a.status = "SCANNING"
 	a.scanStartTime = time.Now()
 	a.findings = nil
 	a.refreshTable()
+	a.scanPanel.Reset()
 	a.AddLog("Real scan started via orchestrator")
 
 	a.orch.OnStage = func(stage types.ScanStage, tool string, progress float64) {
-		a.program.Send(scanStepMsg{
-			stage:    stage,
-			tool:     tool,
-			progress: progress / 100,
-			log:      fmt.Sprintf("Stage: %v | Tool: %s", stage, tool),
-		})
+		if a.program != nil {
+			a.program.Send(scanStepMsg{
+				stage:    stage,
+				tool:     tool,
+				progress: progress / 100,
+				log:      fmt.Sprintf("Stage: %v | Tool: %s", stage, tool),
+			})
+		}
 	}
 
 	a.orchCtx, a.orchCancel = context.WithCancel(context.Background())
@@ -346,10 +364,12 @@ func (a *App) startRealScan() tea.Cmd {
 func (a *App) runOrchInBackground() {
 	go func() {
 		if err := a.orch.Run(a.orchCtx); err != nil {
-			a.program.Send(StatusMsg{
-				Message: fmt.Sprintf("Scan error: %v", err),
-				Time:    time.Now(),
-			})
+			if a.program != nil {
+				a.program.Send(StatusMsg{
+					Message: fmt.Sprintf("Scan error: %v", err),
+					Time:    time.Now(),
+				})
+			}
 		}
 	}()
 
@@ -362,22 +382,28 @@ loop:
 			if !ok {
 				break loop
 			}
-			a.program.Send(FindingMsg{Finding: finding})
+			if a.program != nil {
+				a.program.Send(FindingMsg{Finding: finding})
+			}
 		case err, ok := <-a.orch.Errors():
 			if !ok {
 				break loop
 			}
-			a.program.Send(StatusMsg{
-				Message: fmt.Sprintf("Error: %v", err),
-				Time:    time.Now(),
-			})
+			if a.program != nil {
+				a.program.Send(StatusMsg{
+					Message: fmt.Sprintf("Error: %v", err),
+					Time:    time.Now(),
+				})
+			}
 		}
 	}
 
-	a.program.Send(realScanMsg{
-		duration: time.Since(a.scanStartTime),
-		count:    len(a.findings),
-	})
+	if a.program != nil {
+		a.program.Send(realScanMsg{
+			duration: time.Since(a.scanStartTime),
+			count:    len(a.findings),
+		})
+	}
 }
 
 func (a *App) View() string {

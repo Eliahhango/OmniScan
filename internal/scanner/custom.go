@@ -23,6 +23,8 @@ import (
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
 
+var sharedClient = &http.Client{Timeout: 10 * time.Second}
+
 type CustomScanner struct {
 	Target  string
 	Results chan<- types.Finding
@@ -145,7 +147,6 @@ var CustomChecks = []CustomCheck{
 
 func checkIDOR(target string) ([]types.Finding, error) {
 	var findings []types.Finding
-	client := &http.Client{Timeout: 10 * time.Second}
 
 	endpoints := []string{
 		"/api/users/1", "/api/users/2", "/api/users/3",
@@ -156,12 +157,15 @@ func checkIDOR(target string) ([]types.Finding, error) {
 
 	for _, ep := range endpoints {
 		u := fmt.Sprintf("%s%s", strings.TrimRight(target, "/"), ep)
-		resp, err := client.Get(u)
+		resp, err := sharedClient.Get(u)
 		if err != nil {
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		if resp.StatusCode == 200 {
 			bodyStr := strings.ToLower(string(body))
@@ -187,12 +191,15 @@ func checkIDOR(target string) ([]types.Finding, error) {
 	for _, uid := range uuids {
 		for _, ep := range []string{"/api/users/", "/api/profile/"} {
 			u := fmt.Sprintf("%s%s%s", strings.TrimRight(target, "/"), ep, uid)
-			resp, err := client.Get(u)
+			resp, err := sharedClient.Get(u)
 			if err != nil {
 				continue
 			}
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			if err != nil {
+				continue
+			}
 
 			bodyStr := strings.ToLower(string(body))
 			if resp.StatusCode == 200 && (strings.Contains(bodyStr, "email") || strings.Contains(bodyStr, "password") || strings.Contains(bodyStr, "role")) {
@@ -217,7 +224,6 @@ func checkRaceCondition(target string) ([]types.Finding, error) {
 		"/api/change-password", "/api/transfer",
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
 	concurrency := 20
 
 	for _, ep := range endpoints {
@@ -230,7 +236,7 @@ func checkRaceCondition(target string) ([]types.Finding, error) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				resp, err := client.Post(u, "application/json", bytes.NewReader([]byte(`{}`)))
+				resp, err := sharedClient.Post(u, "application/json", bytes.NewReader([]byte(`{}`)))
 				if err != nil {
 					return
 				}
@@ -272,7 +278,6 @@ func checkRaceCondition(target string) ([]types.Finding, error) {
 
 func check2FABypass(target string) ([]types.Finding, error) {
 	var findings []types.Finding
-	client := &http.Client{Timeout: 10 * time.Second}
 
 	sensitiveEndpoints := []string{
 		"/api/admin", "/api/settings", "/api/security",
@@ -282,13 +287,19 @@ func check2FABypass(target string) ([]types.Finding, error) {
 	for _, ep := range sensitiveEndpoints {
 		u := fmt.Sprintf("%s%s", strings.TrimRight(target, "/"), ep)
 
-		req, _ := http.NewRequest("GET", u, nil)
-		resp, err := client.Do(req)
+		req, err := http.NewRequest("GET", u, nil)
 		if err != nil {
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		resp, err := sharedClient.Do(req)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		bodyStr := strings.ToLower(string(body))
 		twoFAHeaderMissing := resp.Header.Get("X-2FA-Required") == "" &&
@@ -313,9 +324,12 @@ func check2FABypass(target string) ([]types.Finding, error) {
 			`{"otp":"","2fa_code":null}`,
 		}
 		for _, payload := range payloads {
-			req2, _ := http.NewRequest("POST", u, bytes.NewReader([]byte(payload)))
+			req2, err := http.NewRequest("POST", u, bytes.NewReader([]byte(payload)))
+			if err != nil {
+				continue
+			}
 			req2.Header.Set("Content-Type", "application/json")
-			resp2, err := client.Do(req2)
+			resp2, err := sharedClient.Do(req2)
 			if err != nil {
 				continue
 			}
@@ -339,11 +353,10 @@ func check2FABypass(target string) ([]types.Finding, error) {
 
 func checkJWTAuth(target string) ([]types.Finding, error) {
 	var findings []types.Finding
-	client := &http.Client{Timeout: 10 * time.Second}
 
 	noneHeader := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
 	nonePayload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"admin","role":"admin","iat":1516239022}`))
-	noneToken := fmt.Sprintf("%s.%s.", noneHeader, nonePayload)
+	noneToken := fmt.Sprintf("%s.%s", noneHeader, nonePayload)
 
 	endpoints := []string{
 		"/api/admin", "/api/users", "/api/profile",
@@ -353,10 +366,13 @@ func checkJWTAuth(target string) ([]types.Finding, error) {
 	for _, ep := range endpoints {
 		u := fmt.Sprintf("%s%s", strings.TrimRight(target, "/"), ep)
 
-		req, _ := http.NewRequest("GET", u, nil)
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil {
+			continue
+		}
 		req.Header.Set("Authorization", "Bearer "+noneToken)
 
-		resp, err := client.Do(req)
+		resp, err := sharedClient.Do(req)
 		if err != nil {
 			continue
 		}
@@ -374,18 +390,28 @@ func checkJWTAuth(target string) ([]types.Finding, error) {
 		}
 	}
 
-	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
-	pubBytes, _ := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
-	pemBlock := &pem.Block{Type: "PUBLIC KEY", Bytes: pubBytes}
-	pemData := pem.EncodeToMemory(pemBlock)
-
 	for _, ep := range endpoints {
 		u := fmt.Sprintf("%s%s", strings.TrimRight(target, "/"), ep)
-		req, _ := http.NewRequest("GET", u, nil)
+
+		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			continue
+		}
+		pubBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+		if err != nil {
+			continue
+		}
+		pemBlock := &pem.Block{Type: "PUBLIC KEY", Bytes: pubBytes}
+		pemData := pem.EncodeToMemory(pemBlock)
+
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil {
+			continue
+		}
 		req.Header.Set("X-Public-Key", string(pemData))
 		req.Header.Set("Authorization", "Bearer test-key-confusion-token")
 
-		resp, err := client.Do(req)
+		resp, err := sharedClient.Do(req)
 		if err != nil {
 			continue
 		}
@@ -408,7 +434,6 @@ func checkJWTAuth(target string) ([]types.Finding, error) {
 
 func checkSSTI(target string) ([]types.Finding, error) {
 	var findings []types.Finding
-	client := &http.Client{Timeout: 10 * time.Second}
 
 	tests := []struct {
 		name    string
@@ -427,12 +452,15 @@ func checkSSTI(target string) ([]types.Finding, error) {
 		for _, param := range params {
 			u := fmt.Sprintf("%s?%s=%s", strings.TrimRight(target, "/"),
 				param, url.QueryEscape(t.payload))
-			resp, err := client.Get(u)
+			resp, err := sharedClient.Get(u)
 			if err != nil {
 				continue
 			}
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			if err != nil {
+				continue
+			}
 
 			bodyStr := string(body)
 			if strings.Contains(bodyStr, "49") || strings.Contains(bodyStr, "7*7") {
@@ -455,7 +483,6 @@ func checkSSTI(target string) ([]types.Finding, error) {
 
 func checkGraphQL(target string) ([]types.Finding, error) {
 	var findings []types.Finding
-	client := &http.Client{Timeout: 10 * time.Second}
 
 	introspectionQuery := `{"query":"query { __schema { types { name fields { name } } } }"}`
 	endpoints := []string{"/graphql", "/api/graphql", "/graph", "/query", "/v1/graphql"}
@@ -463,12 +490,15 @@ func checkGraphQL(target string) ([]types.Finding, error) {
 	for _, ep := range endpoints {
 		u := fmt.Sprintf("%s%s", strings.TrimRight(target, "/"), ep)
 
-		resp, err := client.Post(u, "application/json", strings.NewReader(introspectionQuery))
+		resp, err := sharedClient.Post(u, "application/json", strings.NewReader(introspectionQuery))
 		if err != nil {
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		if resp.StatusCode == 200 {
 			var result map[string]interface{}
@@ -527,7 +557,10 @@ func checkWebSocket(target string) ([]types.Finding, error) {
 			httpURL := strings.Replace(u, "ws://", "http://", 1)
 			httpURL = strings.Replace(httpURL, "wss://", "https://", 1)
 
-			req, _ := http.NewRequest("GET", httpURL, nil)
+			req, err := http.NewRequest("GET", httpURL, nil)
+			if err != nil {
+				continue
+			}
 			req.Header.Set("Origin", origin)
 			req.Header.Set("Connection", "Upgrade")
 			req.Header.Set("Upgrade", "websocket")
@@ -561,7 +594,6 @@ func checkWebSocket(target string) ([]types.Finding, error) {
 func checkCachePoisoning(target string) ([]types.Finding, error) {
 	var findings []types.Finding
 	target = ensureURL(target)
-	client := &http.Client{Timeout: 10 * time.Second}
 
 	maliciousHost := "evil.com"
 
@@ -572,10 +604,13 @@ func checkCachePoisoning(target string) ([]types.Finding, error) {
 	req.Header.Set("X-Forwarded-Host", maliciousHost)
 	req.Header.Set("X-Forwarded-Scheme", "https")
 
-	resp, err := client.Do(req)
+	resp, err := sharedClient.Do(req)
 	if err == nil {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			return findings, nil
+		}
 
 		bodyStr := strings.ToLower(string(body))
 		if strings.Contains(bodyStr, maliciousHost) || strings.Contains(bodyStr, "evil") {
@@ -597,14 +632,20 @@ func checkCachePoisoning(target string) ([]types.Finding, error) {
 		"X-Forwarded-Host":        "evil.com",
 	}
 	for header, value := range poisonHeaders {
-		req2, _ := http.NewRequest("GET", target, nil)
-		req2.Header.Set(header, value)
-		resp2, err := client.Do(req2)
+		req2, err := http.NewRequest("GET", target, nil)
 		if err != nil {
 			continue
 		}
-		body2, _ := io.ReadAll(resp2.Body)
+		req2.Header.Set(header, value)
+		resp2, err := sharedClient.Do(req2)
+		if err != nil {
+			continue
+		}
+		body2, err := io.ReadAll(resp2.Body)
 		resp2.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		if strings.Contains(strings.ToLower(string(body2)), "evil") || resp2.StatusCode == 200 {
 			findings = append(findings, types.Finding{
@@ -624,7 +665,6 @@ func checkCachePoisoning(target string) ([]types.Finding, error) {
 func checkPrototypePollution(target string) ([]types.Finding, error) {
 	var findings []types.Finding
 	target = ensureURL(target)
-	client := &http.Client{Timeout: 10 * time.Second}
 
 	payloads := []string{
 		"?__proto__[test]=true",
@@ -634,12 +674,15 @@ func checkPrototypePollution(target string) ([]types.Finding, error) {
 
 	for _, payload := range payloads {
 		u := fmt.Sprintf("%s%s", strings.TrimRight(target, "/"), payload)
-		resp, err := client.Get(u)
+		resp, err := sharedClient.Get(u)
 		if err != nil {
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		bodyStr := strings.ToLower(string(body))
 		if strings.Contains(bodyStr, "__proto__") || strings.Contains(bodyStr, "constructor") {
@@ -679,8 +722,11 @@ func checkHostHeaderInjection(target string) ([]types.Finding, error) {
 		if err != nil {
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		bodyStr := strings.ToLower(string(body))
 		if strings.Contains(bodyStr, host) || resp.StatusCode == 200 {
@@ -723,8 +769,11 @@ func checkCRLFInjection(target string) ([]types.Finding, error) {
 		if err != nil {
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			continue
+		}
 
 		bodyStr := string(body)
 		if strings.Contains(bodyStr, "X-Injected") || strings.Contains(bodyStr, "Injected-Header") {
@@ -744,7 +793,6 @@ func checkCRLFInjection(target string) ([]types.Finding, error) {
 
 func checkAccountTakeover(target string) ([]types.Finding, error) {
 	var findings []types.Finding
-	client := &http.Client{Timeout: 10 * time.Second}
 
 	resetEndpoints := []string{
 		"/api/reset-password", "/api/forgot-password",
@@ -755,16 +803,22 @@ func checkAccountTakeover(target string) ([]types.Finding, error) {
 		u := fmt.Sprintf("%s%s", strings.TrimRight(target, "/"), ep)
 
 		for _, token := range []string{"123456", "000000", "111111", "token=1", "token=admin"} {
-			req, _ := http.NewRequest("POST", u,
+			req, err := http.NewRequest("POST", u,
 				bytes.NewReader([]byte(fmt.Sprintf(`{"token":"%s","email":"test@test.com"}`, token))))
-			req.Header.Set("Content-Type", "application/json")
-
-			resp, err := client.Do(req)
 			if err != nil {
 				continue
 			}
-			body, _ := io.ReadAll(resp.Body)
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := sharedClient.Do(req)
+			if err != nil {
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			if err != nil {
+				continue
+			}
 
 			bodyStr := strings.ToLower(string(body))
 			if resp.StatusCode == 200 && !strings.Contains(bodyStr, "invalid") && !strings.Contains(bodyStr, "error") {
@@ -781,10 +835,13 @@ func checkAccountTakeover(target string) ([]types.Finding, error) {
 		}
 
 		emailChangePayload := `{"email":"attacker@evil.com","current_email":"test@test.com"}`
-		req, _ := http.NewRequest("POST", u, bytes.NewReader([]byte(emailChangePayload)))
+		req, err := http.NewRequest("POST", u, bytes.NewReader([]byte(emailChangePayload)))
+		if err != nil {
+			continue
+		}
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := client.Do(req)
+		resp, err := sharedClient.Do(req)
 		if err != nil {
 			continue
 		}
@@ -884,8 +941,7 @@ func ensureURL(target string) string {
 func checkSecurityHeaders(target string) ([]types.Finding, error) {
 	var findings []types.Finding
 	target = ensureURL(target)
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil }}
-	resp, err := client.Get(target)
+	resp, err := sharedClient.Get(target)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,6 +1109,12 @@ func checkPorts(target string) ([]types.Finding, error) {
 	return findings, nil
 }
 
+type compiledPattern struct {
+	name     string
+	re       *regexp.Regexp
+	severity types.Severity
+}
+
 func checkJSSecrets(target string) ([]types.Finding, error) {
 	var findings []types.Finding
 	target = ensureURL(target)
@@ -1072,22 +1134,18 @@ func checkJSSecrets(target string) ([]types.Finding, error) {
 	jsFiles := extractJSUrls(string(body), target)
 	seen := make(map[string]bool)
 
-	patterns := []struct {
-		name     string
-		pattern  string
-		severity types.Severity
-	}{
-		{"Google API Key", `AIza[0-9A-Za-z\-_]{35}`, types.SeverityHigh},
-		{"AWS Access Key", `AKIA[0-9A-Z]{16}`, types.SeverityHigh},
-		{"AWS Secret Key", `(?i)aws(.{0,20})?(?-i)['\"][0-9a-zA-Z\/+]{40}['\"]`, types.SeverityHigh},
-		{"Slack Token", `xox[baprs]-[0-9a-zA-Z\-]{10,48}`, types.SeverityHigh},
-		{"GitHub Token", `gh[pousr]_[A-Za-z0-9_]{36,255}`, types.SeverityHigh},
-		{"Generic API Key", `(?i)(api[_-]?key|apikey|api[_-]?secret)[\s"':=]+[A-Za-z0-9_\-]{16,64}`, types.SeverityMedium},
-		{"Password in JS", `(?i)(password|passwd|pwd)[\s"':=]+[^\s"']{8,50}`, types.SeverityCritical},
-		{"JWT Token", `eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}`, types.SeverityMedium},
-		{"Firebase URL", `[a-z0-9\-]{3,40}\.firebaseio\.com`, types.SeverityMedium},
-		{"Private Key", `-----BEGIN (RSA |EC )?PRIVATE KEY-----`, types.SeverityCritical},
-		{"Heroku API Key", `[hH][eR][rR][oO][kK][uU].*[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}`, types.SeverityHigh},
+	patterns := []compiledPattern{
+		{"Google API Key", regexp.MustCompile(`AIza[0-9A-Za-z\-_]{35}`), types.SeverityHigh},
+		{"AWS Access Key", regexp.MustCompile(`AKIA[0-9A-Z]{16}`), types.SeverityHigh},
+		{"AWS Secret Key", regexp.MustCompile(`(?i)aws(.{0,20})?['\"][0-9a-zA-Z\/+]{40}['\"]`), types.SeverityHigh},
+		{"Slack Token", regexp.MustCompile(`xox[baprs]-[0-9a-zA-Z\-]{10,48}`), types.SeverityHigh},
+		{"GitHub Token", regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]{36,255}`), types.SeverityHigh},
+		{"Generic API Key", regexp.MustCompile(`(?i)(api[_-]?key|apikey|api[_-]?secret)[\s"':=]+[A-Za-z0-9_\-]{16,64}`), types.SeverityMedium},
+		{"Password in JS", regexp.MustCompile(`(?i)(password|passwd|pwd)[\s"':=]+[^\s"']{8,50}`), types.SeverityCritical},
+		{"JWT Token", regexp.MustCompile(`eyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}`), types.SeverityMedium},
+		{"Firebase URL", regexp.MustCompile(`[a-z0-9\-]{3,40}\.firebaseio\.com`), types.SeverityMedium},
+		{"Private Key", regexp.MustCompile(`-----BEGIN (RSA |EC )?PRIVATE KEY-----`), types.SeverityCritical},
+		{"Heroku API Key", regexp.MustCompile(`[hH][eR][rR][oO][kK][uU].*[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}`), types.SeverityHigh},
 	}
 
 	for _, jsURL := range jsFiles {
@@ -1108,8 +1166,7 @@ func checkJSSecrets(target string) ([]types.Finding, error) {
 
 		jsContent := string(jsBody)
 		for _, p := range patterns {
-			re := regexp.MustCompile(p.pattern)
-			matches := re.FindAllString(jsContent, -1)
+			matches := p.re.FindAllString(jsContent, -1)
 			dedup := make(map[string]bool)
 			for _, m := range matches {
 				if dedup[m] {

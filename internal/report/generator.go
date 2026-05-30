@@ -1,10 +1,12 @@
 package report
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,33 @@ import (
 	"github.com/Eliahhango/OmniScan/internal/version"
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
+
+type safeWriter struct {
+	buf bytes.Buffer
+	err error
+}
+
+func (sw *safeWriter) printf(format string, a ...interface{}) {
+	if sw.err != nil {
+		return
+	}
+	_, sw.err = fmt.Fprintf(&sw.buf, format, a...)
+}
+
+func (sw *safeWriter) write(s string) {
+	if sw.err != nil {
+		return
+	}
+	_, sw.err = sw.buf.WriteString(s)
+}
+
+func (sw *safeWriter) flushTo(w io.Writer) error {
+	if sw.err != nil {
+		return sw.err
+	}
+	_, err := sw.buf.WriteTo(w)
+	return err
+}
 
 type Generator struct {
 	OutputDir string
@@ -41,6 +70,7 @@ type ReportData struct {
 	GeneratedAt    string
 	RiskScore      float64
 	RiskLabel      string
+	RiskClass      string
 	VulnFindings   []types.Finding
 	InfoFindings   []types.Finding
 
@@ -183,10 +213,11 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 
 	data.OWASPCounts = make(map[string]int)
 
-	// Count severity and collect CWE/OWASP
-	var totalCVSS float64
+	// Count severity and collect CWE/OWASP, CVSS
 	cweSet := make(map[string]bool)
 	owaspSet := make(map[string]bool)
+	var scoredCount int
+	var totalCVSS float64
 
 	for _, f := range findings {
 		switch f.Severity {
@@ -201,20 +232,16 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 		default:
 			data.SeverityBreakdown.Info++
 		}
-		totalCVSS += f.CVSS
+		if f.CVSS > 0 && f.Severity != types.SeverityInfo {
+			totalCVSS += f.CVSS
+			scoredCount++
+		}
 		for _, cwe := range f.CWE {
 			cweSet[cwe] = true
 		}
 		if f.OWASP2025 != "" {
 			owaspSet[f.OWASP2025] = true
 			data.OWASPCounts[f.OWASP2025]++
-		}
-	}
-
-	scoredCount := 0
-	for _, f := range vulns {
-		if f.CVSS > 0 {
-			scoredCount++
 		}
 	}
 	if scoredCount > 0 {
@@ -236,21 +263,27 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 	riskScore := float64(data.SeverityBreakdown.Critical)*10 +
 		float64(data.SeverityBreakdown.High)*7 +
 		float64(data.SeverityBreakdown.Medium)*4 +
-		float64(data.SeverityBreakdown.Low)*1
+		float64(data.SeverityBreakdown.Low)
 
 	if data.EnginesActive < data.EnginesTotal && data.EnginesActive <= 4 {
 		data.RiskLabel = fmt.Sprintf("Medium (pending full-coverage scan — %d/%d engines active)", data.EnginesActive, data.EnginesTotal)
+		data.RiskClass = "risk-medium"
 		data.CoverageWarning = fmt.Sprintf("Due to scanning environment constraints, %d of %d planned scanning engines could not be executed. Active findings are drawn from a subset of available tools. A full-coverage re-scan is recommended once all tooling is properly configured.", data.EnginesTotal-data.EnginesActive, data.EnginesTotal)
 	} else if riskScore >= 20 {
 		data.RiskLabel = "Critical"
+		data.RiskClass = "risk-critical"
 	} else if riskScore >= 10 {
 		data.RiskLabel = "High"
+		data.RiskClass = "risk-high"
 	} else if riskScore >= 5 {
 		data.RiskLabel = "Medium"
+		data.RiskClass = "risk-medium"
 	} else if riskScore > 0 {
 		data.RiskLabel = "Low"
+		data.RiskClass = "risk-low"
 	} else {
 		data.RiskLabel = "None"
+		data.RiskClass = "risk-none"
 	}
 	data.RiskScore = riskScore
 
@@ -365,12 +398,6 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 	}
 
 	// Header coverage gap
-	presentCount := 0
-	for _, f := range vulns {
-		if f.ToolSource == "custom-headers" && f.Severity == types.SeverityInfo {
-			presentCount++
-		}
-	}
 	headerFindings := 0
 	for _, f := range vulns {
 		if f.ToolSource == "custom-headers" {
@@ -476,8 +503,9 @@ func (g *Generator) GenerateHTML(data ReportData) (string, error) {
 		return "", err
 	}
 	funcMap := template.FuncMap{
-		"lower":   strings.ToLower,
-		"join":    strings.Join,
+		"lower":      strings.ToLower,
+		"join":       strings.Join,
+		"trimPrefix": strings.TrimPrefix,
 		"percent": func(count, total int) string {
 			if total == 0 {
 				return "0%"
@@ -941,17 +969,15 @@ func (g *Generator) GenerateMarkdown(data ReportData) (string, error) {
 		w("| Engine | Status | Notes |\n")
 		w("|--------|--------|-------|\n")
 		for _, e := range data.EngineStatus {
-			icon := "✅"
-			status := "Active"
+			status := "[ACTIVE]"
 			if e.Status == "Not Available" {
-				icon = "❌"
-				status = "Not Available"
+				status = "[UNAVAILABLE]"
 			}
-			w("| %s | %s %s | %s |\n", e.Name, icon, status, e.Notes)
+			w("| %s | %s | %s |\n", e.Name, status, e.Notes)
 		}
 		w("\n")
 		if data.CoverageWarning != "" {
-			w("> ⚠ **Coverage Warning:** %s\n\n", data.CoverageWarning)
+			w("> **Coverage Warning:** %s\n\n", data.CoverageWarning)
 		}
 	}
 
@@ -980,8 +1006,9 @@ func (g *Generator) GeneratePDF(data ReportData) (string, error) {
 		return "", err
 	}
 	funcMap := template.FuncMap{
-		"lower":   strings.ToLower,
-		"join":    strings.Join,
+		"lower":      strings.ToLower,
+		"join":       strings.Join,
+		"trimPrefix": strings.TrimPrefix,
 		"percent": func(count, total int) string {
 			if total == 0 {
 				return "0%"
@@ -1056,7 +1083,7 @@ func (g *Generator) GenerateTXT(data ReportData) (string, error) {
 	sw("  " + data.Scope)
 	sw("")
 	if data.CoverageWarning != "" {
-		sw("  ⚠ NOTE ON TOOL COVERAGE")
+		sw("  [*] NOTE ON TOOL COVERAGE")
 		sw("  " + data.CoverageWarning)
 		sw("")
 	}
@@ -1512,19 +1539,17 @@ func (g *Generator) GenerateTXT(data ReportData) (string, error) {
 		sw("    Engine              Status           Notes")
 		sw("    ------              ------           -----")
 		for _, e := range data.EngineStatus {
-			icon := "✅"
-			status := "Active"
-			if e.Status == "Not Available" {
-				icon = "❌"
-				status = "Not Available"
-			}
-			w("    %-19s %s %-13s %s\n", e.Name, icon, status, e.Notes)
+		status := "[ACTIVE]"
+		if e.Status == "Not Available" {
+			status = "[UNAVAILABLE]"
 		}
+		w("    %-19s %-13s %s\n", e.Name, status, e.Notes)
+	}
+	sw("")
+	if data.CoverageWarning != "" {
+		sw("    [*] " + data.CoverageWarning)
 		sw("")
-		if data.CoverageWarning != "" {
-			sw("    ⚠ " + data.CoverageWarning)
-			sw("")
-		}
+	}
 	}
 
 	// Appendix D — Glossary

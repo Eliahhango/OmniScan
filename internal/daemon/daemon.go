@@ -47,31 +47,54 @@ func (s *Server) Start(ctx context.Context) error {
 
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
 
-	s.httpServer = &http.Server{Addr: s.listen, Handler: mux}
+	s.httpServer = &http.Server{
+		Addr:         s.listen,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
+	done := make(chan struct{})
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.httpServer.Shutdown(shutdownCtx)
+		for ws := range s.wsClients {
+			ws.Close()
+		}
+		close(done)
 	}()
 
 	log.Printf("daemon listening on %s", s.listen)
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
+	<-done
 	return nil
 }
 
 func (s *Server) Broadcast(finding types.Finding) {
 	data, err := json.Marshal(finding)
 	if err != nil {
+		log.Printf("broadcast marshal error: %v", err)
 		return
 	}
 	s.wsMu.Lock()
-	defer s.wsMu.Unlock()
+	clients := make([]*websocket.Conn, 0, len(s.wsClients))
 	for ws := range s.wsClients {
-		ws.Write(data)
+		clients = append(clients, ws)
+	}
+	s.wsMu.Unlock()
+
+	for _, ws := range clients {
+		if _, err := ws.Write(data); err != nil {
+			s.wsMu.Lock()
+			delete(s.wsClients, ws)
+			s.wsMu.Unlock()
+			ws.Close()
+		}
 	}
 }
 

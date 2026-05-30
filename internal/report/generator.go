@@ -39,6 +39,13 @@ type ReportData struct {
 	GeneratedAt   string
 	RiskScore     float64
 	RiskLabel     string
+
+	// Professional report fields
+	Scope                  string
+	Methodology            string
+	ExecutiveSummary       string
+	StrategicRecommendations []string
+	ObservedStrengths      []string
 }
 
 func NewGenerator(outputDir string) *Generator {
@@ -80,6 +87,8 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 		TotalVulns:  len(findings),
 		GeneratedAt: time.Now().Format("2006-01-02 15:04:05"),
 		Findings:    findings,
+		Scope: fmt.Sprintf("Security assessment of %s. Testing methodology follows OWASP Top 10:2025, CWE classification, and CVSS v3.1 scoring standards. All scans performed from an external perspective against publicly accessible endpoints.", target),
+		Methodology: fmt.Sprintf("The assessment was conducted using %d industry-standard scanning engines covering network reconnaissance, web application scanning, directory fuzzing, CVE template matching, static analysis, secret detection, and dependency auditing. Findings are enriched with EPSS (Exploit Prediction Scoring System) scores, mapped to CWE categories and OWASP Top 10:2025 classifications.", len(tools)),
 	}
 
 	data.OWASPCounts = make(map[string]int)
@@ -146,6 +155,91 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 	}
 	data.TopCritical = critical
 
+	// Build executive summary
+	summaryParts := []string{
+		fmt.Sprintf("A security assessment was conducted on %s utilizing %d scanning engines over a period of %s.", target, len(tools), data.Duration),
+	}
+	if data.TotalVulns > 0 {
+		summaryParts = append(summaryParts,
+			fmt.Sprintf("The assessment identified %d vulnerabilities in total, comprising %d critical, %d high, %d medium, and %d low severity findings.",
+				data.TotalVulns,
+				data.SeverityBreakdown.Critical,
+				data.SeverityBreakdown.High,
+				data.SeverityBreakdown.Medium,
+				data.SeverityBreakdown.Low))
+		summaryParts = append(summaryParts,
+			"The overall risk posture of the target is rated as "+data.RiskLabel+" based on the severity distribution and exploitability of identified vulnerabilities.")
+		if data.CVSSAvg > 0 {
+			summaryParts = append(summaryParts,
+				fmt.Sprintf("The average CVSS v3.1 score across all findings is %.1f, indicating the overall severity level of identified security weaknesses.", data.CVSSAvg))
+		}
+		if data.CWECount > 0 {
+			summaryParts = append(summaryParts,
+				fmt.Sprintf("Vulnerabilities span %d distinct CWE categories, with coverage across %d of 10 OWASP Top 10:2025 categories.", data.CWECount, data.OWASPCoverage))
+		}
+		if data.SeverityBreakdown.Critical+data.SeverityBreakdown.High > 0 {
+			richParts := []string{
+				"The most critical issues include:",
+			}
+			for i, f := range data.TopCritical {
+				if i >= 3 {
+					break
+				}
+				richParts = append(richParts, fmt.Sprintf("- %s [%s] affecting %s", f.Title, f.CVE, f.AffectedURL))
+			}
+			summaryParts = append(summaryParts, strings.Join(richParts, "\n"))
+		}
+		data.ExecutiveSummary = strings.Join(summaryParts, " ")
+	} else {
+		data.ExecutiveSummary = fmt.Sprintf("A security assessment was conducted on %s utilizing %d scanning engines over a period of %s. No vulnerabilities were identified during the assessment. The target demonstrates a strong security posture against the tested attack vectors.", target, len(tools), data.Duration)
+	}
+
+	// Build strategic recommendations
+	if data.TotalVulns > 0 {
+		recs := []string{}
+		if data.SeverityBreakdown.Critical > 0 {
+			recs = append(recs, "Immediately address all Critical severity findings. These vulnerabilities present an active and significant risk to the confidentiality, integrity, and availability of affected systems.")
+		}
+		if data.SeverityBreakdown.High > 0 {
+			recs = append(recs, "Prioritize remediation of High severity findings within one week. These vulnerabilities can lead to sensitive data exposure or unauthorized access if exploited.")
+		}
+		if data.SeverityBreakdown.Medium > 0 {
+			recs = append(recs, "Schedule remediation of Medium severity findings within the next monthly maintenance cycle. While less urgent, these weaknesses can be chained with other vulnerabilities for greater impact.")
+		}
+		recs = append(recs, "Establish a regular vulnerability scanning cadence to identify new security weaknesses as the application evolves and new threats emerge.")
+		recs = append(recs, "Implement a secure development lifecycle (SDLC) program including security requirements, threat modeling, and security testing integrated into CI/CD pipelines.")
+		recs = append(recs, "Conduct regular security awareness training for development teams focusing on the OWASP Top 10:2025 vulnerability categories identified in this assessment.")
+		data.StrategicRecommendations = recs
+	} else {
+		data.StrategicRecommendations = []string{
+			"Maintain the current security posture and continue regular vulnerability scanning to detect new issues as the application evolves.",
+			"Consider expanding scan coverage by adding authenticated scanning, API endpoint testing, and internal network assessments.",
+			"Implement continuous security monitoring and integrate security testing into the CI/CD pipeline for early vulnerability detection.",
+		}
+	}
+
+	// Build observed strengths
+	strengths := []string{}
+	if data.SeverityBreakdown.Info > 0 {
+		strengths = append(strengths, fmt.Sprintf("%d informational findings suggest comprehensive tool coverage and thorough scanning methodology.", data.SeverityBreakdown.Info))
+	}
+	if data.OWASPCoverage > 0 {
+		strengths = append(strengths, fmt.Sprintf("Vulnerability mapping covers %d of 10 OWASP Top 10:2025 categories, indicating broad attack surface coverage in the assessment.", data.OWASPCoverage))
+	}
+	if data.CWECount > 0 {
+		strengths = append(strengths, fmt.Sprintf("Findings are mapped across %d distinct CWE categories, providing granular classification for targeted remediation.", data.CWECount))
+	}
+	if len(tools) > 0 {
+		strengths = append(strengths, fmt.Sprintf("Assessment leveraged %d distinct security scanning tools for comprehensive multi-vector coverage.", len(tools)))
+	}
+	if data.TotalVulns == 0 || (data.SeverityBreakdown.Critical == 0 && data.SeverityBreakdown.High == 0 && data.SeverityBreakdown.Medium == 0) {
+		strengths = append(strengths, "No serious vulnerabilities were identified, suggesting effective existing security controls and development practices.")
+	}
+	if len(strengths) == 0 {
+		strengths = append(strengths, "Assessment completed successfully with full tool chain coverage.")
+	}
+	data.ObservedStrengths = strengths
+
 	return data
 }
 
@@ -160,6 +254,9 @@ func (g *Generator) GenerateHTML(data ReportData) (string, error) {
 				return "0%"
 			}
 			return fmt.Sprintf("%.0f%%", float64(count)/float64(total)*100)
+		},
+		"add": func(a, b int) int {
+			return a + b
 		},
 		"owaspCategories": func() []string {
 			return []string{
@@ -253,6 +350,9 @@ func (g *Generator) GeneratePDF(data ReportData) (string, error) {
 				return "0%"
 			}
 			return fmt.Sprintf("%.0f%%", float64(count)/float64(total)*100)
+		},
+		"add": func(a, b int) int {
+			return a + b
 		},
 		"owaspCategories": func() []string {
 			return []string{

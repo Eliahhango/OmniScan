@@ -57,14 +57,14 @@ sem_start=$SECONDS
 pipx install semgrep -q >/dev/null 2>&1 &
 pid=$!; spin='-\|/'; i=0
 while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  ${spin:i++%4:1}  semgrep  ⏱%s" "$(fmt_time $((SECONDS - sem_start)))"
+    printf "\r  \033[K${spin:i++%4:1}  semgrep  %s" "$(fmt_time $((SECONDS - sem_start)))"
     sleep 0.2
 done
 wait "$pid"; rc=$?
 if [ $rc -eq 0 ]; then
-    printf "\r  ${GREEN}OK${NC}   semgrep  ⏱%s  total:%s\n" "$(fmt_time $((SECONDS - sem_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
+    printf "\r  \033[K${GREEN}OK${NC}   semgrep  %s  elapsed:%s\n" "$(fmt_time $((SECONDS - sem_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
 else
-    printf "\r  ${YELLOW}WARN${NC}  semgrep  ⏱%s  (pipx install semgrep manually)\n" "$(fmt_time $((SECONDS - sem_start)))"
+    printf "\r  \033[K${YELLOW}WARN${NC}  semgrep  %s  (pipx install semgrep manually)\n" "$(fmt_time $((SECONDS - sem_start)))"
 fi
 
 # ─────────────────────────────────────────── Step 4: Go tools ────────────────────────────────────────────
@@ -116,8 +116,8 @@ for entry in "${GO_TOOLS[@]}"; do
         avg=$(( COMPLETED > 0 ? (total_sec - e) / COMPLETED : total_sec / (cmp) ))
         rem=$(( (TOTAL - cmp) * (avg > 0 ? avg : 30) ))
 
-        printf "\r  ${spin:i++%4:1}  %-12s ⏱%s  📥%dM" "$name" "$(fmt_time $e)" "$dl"
-        printf "  ⚡%dM/s" "$peak_speed"
+        printf "\r  \033[K${spin:i++%4:1}  %-12s %s  +%dM" "$name" "$(fmt_time $e)" "$dl"
+        printf "  %dM/s" "$peak_speed"
         printf "  [%d/%d]  eta %s  total %s" "$cmp" "$TOTAL" "$(fmt_time $rem)" "$(fmt_time $total_sec)"
         sleep 0.2
     done
@@ -132,10 +132,10 @@ for entry in "${GO_TOOLS[@]}"; do
     dl=$(( (cur - cache_start) / 1048576 ))
 
     if [ $rc -eq 0 ]; then
-        printf "\r  ${GREEN}OK${NC}  %-12s ⏱%s  📥%dM  [%d/%d]  total %s\n" \
+        printf "\r  \033[K${GREEN}OK${NC}  %-12s %s  +%dM  [%d/%d]  elapsed %s\n" \
             "$name" "$(fmt_time $e)" "$dl" "$COMPLETED" "$TOTAL" "$(fmt_time $((SECONDS - GLOBAL_START)))"
     else
-        printf "\r  ${RED}FAIL${NC} %-12s ⏱%s  [%d/%d]\n" \
+        printf "\r  \033[K${RED}FAIL${NC} %-12s %s  [%d/%d]\n" \
             "$name" "$(fmt_time $e)" "$COMPLETED" "$TOTAL"
     fi
 done
@@ -151,15 +151,15 @@ build_start=$SECONDS
 go build -o "$HOME/go/bin/omniscan" ./cmd/omniscan/ >/dev/null 2>&1 &
 pid=$!; spin='-\|/'; i=0
 while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  ${spin:i++%4:1}  Compiling  ⏱%s  total %s" \
+    printf "\r  \033[K${spin:i++%4:1}  Compiling  %s  elapsed %s" \
         "$(fmt_time $((SECONDS - build_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
     sleep 0.2
 done
 wait "$pid"; rc=$?
 if [ $rc -eq 0 ]; then
-    printf "\r  ${GREEN}OK${NC}   Compiling  ⏱%s  total %s\n" "$(fmt_time $((SECONDS - build_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
+    printf "\r  \033[K${GREEN}OK${NC}   Compiling  %s  elapsed %s\n" "$(fmt_time $((SECONDS - build_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
 else
-    printf "\r  ${RED}FAIL${NC} Compiling  ⏱%s\n" "$(fmt_time $((SECONDS - build_start)))"
+    printf "\r  \033[K${RED}FAIL${NC} Compiling  %s\n" "$(fmt_time $((SECONDS - build_start)))"
     exit 1
 fi
 
@@ -180,9 +180,9 @@ done
 echo ""
 total_elapsed=$((SECONDS - GLOBAL_START))
 if [ "$MISSING" -eq 0 ]; then
-    echo -e "${GREEN}All tools installed successfully!${NC}  ⏱$(fmt_time $total_elapsed)"
+    echo -e "${GREEN}All tools installed successfully!${NC}  elapsed:$(fmt_time $total_elapsed)"
 else
-    echo -e "${RED}$MISSING tool(s) missing — see above${NC}  ⏱$(fmt_time $total_elapsed)"
+    echo -e "${RED}$MISSING tool(s) missing — see above${NC}  elapsed:$(fmt_time $total_elapsed)"
 fi
 echo ""
 echo -e "${CYAN}Quick test:${NC} omniscan scan -t elitechwiz.com"

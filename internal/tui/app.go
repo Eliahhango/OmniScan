@@ -394,13 +394,14 @@ func (a *App) View() string {
 	}
 
 	title := DefaultStyles.Title.Render(fmt.Sprintf("OmniScan v1.0  |  Target: %s  |  Status: %s", a.target, a.status))
+	credit := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("EliTechWiz — github.com/Eliahhango")
 	tabBar := a.renderTabs()
 	content := a.renderContent()
 	logBox := a.logViewport.View()
 	helpView := a.help.View(a.keys)
 
 	return lipgloss.JoinVertical(lipgloss.Top,
-		title, tabBar, "", content, "", logBox, "", helpView,
+		title, credit, tabBar, "", content, "", logBox, "", helpView,
 	)
 }
 

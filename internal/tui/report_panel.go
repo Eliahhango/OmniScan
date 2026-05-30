@@ -19,8 +19,8 @@ func (r *ReportPanel) View(findings []types.Finding) string {
 	}
 
 	var lines []string
-	lines = append(lines, "OmniScan Report")
-	lines = append(lines, strings.Repeat("=", 40))
+	lines = append(lines, "OmniScan Report — EliTechWiz/github.com/Eliahhango")
+	lines = append(lines, strings.Repeat("=", 60))
 	lines = append(lines, fmt.Sprintf("Total Findings: %d\n", len(findings)))
 
 	var critical, high, medium, low, info int

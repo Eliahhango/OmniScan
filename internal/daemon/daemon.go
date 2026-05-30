@@ -56,7 +56,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.httpServer.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("OmniScan daemon listening on %s", s.listen)
+	log.Printf("OmniScan daemon (EliTechWiz/github.com/Eliahhango) listening on %s", s.listen)
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}

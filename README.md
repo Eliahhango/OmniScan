@@ -135,6 +135,25 @@ internal/
 pkg/types/          Shared types
 ```
 
+## Disclaimer
+
+**OmniScan is a security testing tool. Misuse of this tool may violate applicable laws.**
+
+By using this software, you acknowledge and agree that:
+- You will only use OmniScan against systems you own or have **explicit written authorization** to test
+- Unauthorized scanning or testing of computer systems is illegal in many jurisdictions
+- You are solely responsible for complying with all applicable laws and regulations
+- The developer(s) assume **no liability** and **provide no warranty** for any damages or legal consequences arising from use of this tool
+
+This tool is provided for **legitimate security research, educational purposes, and authorized penetration testing only.**
+
 ## License
 
-MIT
+OmniScan is released under the **OmniScan Ethical Use License** — see the [LICENSE](LICENSE) file for details.
+
+Key terms:
+- ✅ Lawful security research and authorized testing
+- ✅ Educational purposes
+- ❌ Unauthorized access or exploitation
+- ❌ Malicious use of any kind
+- ❌ No warranty — use at your own risk

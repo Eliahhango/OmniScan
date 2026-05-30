@@ -1,0 +1,48 @@
+OmniScan Ethical Use License
+
+Copyright (c) 2026 EliTechWiz (Eliah Hango)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use
+the Software solely for lawful security research, educational purposes, and
+authorized penetration testing, subject to the following conditions:
+
+1. ETHICAL USE ONLY
+   The Software is designed exclusively for legitimate security assessment
+   of systems and networks that you own or have explicit written authorization
+   to test. Any use of the Software for unauthorized access, exploitation,
+   or damage to computer systems is strictly prohibited.
+
+2. AUTHORIZATION REQUIRED
+   You must obtain explicit written permission from the owner of any system
+   or network before using the Software against it. Unauthorized scanning
+   or testing may violate applicable laws including but not limited to the
+   Computer Fraud and Abuse Act (CFAA), the Computer Misuse Act, and similar
+   legislation worldwide.
+
+3. NO MALICIOUS USE
+   You may not use the Software to:
+   a) Gain unauthorized access to any system, network, or data
+   b) Disrupt, degrade, or deny service to any system or user
+   c) Exfiltrate, modify, or destroy data without authorization
+   d) Develop, host, or distribute malware or exploits
+   e) Engage in any activity that violates applicable law
+
+4. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+   ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+   OTHER DEALINGS IN THE SOFTWARE.
+
+5. INDEMNIFICATION
+   You agree to indemnify, defend, and hold harmless the authors and copyright
+   holders from any claims, damages, or liabilities arising from your use
+   of the Software, including any unauthorized or illegal use.
+
+6. COMPLIANCE WITH LAW
+   You are solely responsible for ensuring your use of the Software complies
+   with all applicable local, state, national, and international laws and
+   regulations.

@@ -7,6 +7,9 @@ STEP=0
 
 fmt_time() { local s=$1; printf "%dm%02ds" $((s/60)) $((s%60)); }
 
+# Determine Go binary directory
+GOBIN="$(go env GOPATH 2>/dev/null || echo "$HOME/go")/bin"
+
 # Monitor Go module cache to estimate download speed + size
 cache_start=0
 init_cache_monitor() {
@@ -190,23 +193,19 @@ rm -f /tmp/th.tar.gz /tmp/trufflehog
 # ────────────────────────────────────────── Step 5: Build OmniScan ──────────────────────────────────────────
 echo -e "${CYAN}[$((++STEP))/6]${NC} Building OmniScan..."
 if [ ! -d "$HOME/OmniScan" ]; then
-    git clone https://github.com/Eliahhango/OmniScan.git "$HOME/OmniScan" >/dev/null 2>&1
+    git clone https://github.com/Eliahhango/OmniScan.git "$HOME/OmniScan"
 fi
-cd "$HOME/OmniScan" && git pull >/dev/null 2>&1
+cd "$HOME/OmniScan" && git pull
+
+mkdir -p "$GOBIN"
 
 build_start=$SECONDS
-    go build -ldflags="-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=$(git describe --tags --always 2>/dev/null || echo dev)" -o "$HOME/go/bin/omniscan" ./cmd/omniscan/ >/dev/null 2>&1 &
-pid=$!; spin='-\|/'; i=0
-while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  \033[K${spin:i++%4:1}  Compiling  %s  elapsed %s" \
-        "$(fmt_time $((SECONDS - build_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
-    sleep 0.2
-done
-wait "$pid"; rc=$?
+go build -ldflags="-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=$(git describe --tags --always 2>/dev/null || echo dev)" -o "$GOBIN/omniscan" ./cmd/omniscan/
+rc=$?
 if [ $rc -eq 0 ]; then
-    printf "\r  \033[K${GREEN}OK${NC}   Compiling  %s  elapsed %s\n" "$(fmt_time $((SECONDS - build_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
+    printf "  ${GREEN}OK${NC}   Compiling  %s  elapsed %s\n" "$(fmt_time $((SECONDS - build_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
 else
-    printf "\r  \033[K${RED}FAIL${NC} Compiling  %s\n" "$(fmt_time $((SECONDS - build_start)))"
+    printf "  ${RED}FAIL${NC} Compiling  %s\n" "$(fmt_time $((SECONDS - build_start)))"
     exit 1
 fi
 
@@ -228,6 +227,9 @@ echo ""
 total_elapsed=$((SECONDS - GLOBAL_START))
 if [ "$MISSING" -eq 0 ]; then
     echo -e "${GREEN}All tools installed successfully!${NC}  elapsed:$(fmt_time $total_elapsed)"
+echo ""
+echo -e "${YELLOW}Make sure $GOBIN is in your PATH.${NC}"
+echo -e "${YELLOW}If 'omniscan' is not found, run: export PATH=\$PATH:$GOBIN${NC}"
 else
     echo -e "${RED}$MISSING tool(s) missing — see above${NC}  elapsed:$(fmt_time $total_elapsed)"
 fi

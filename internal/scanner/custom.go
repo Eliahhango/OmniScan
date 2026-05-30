@@ -704,8 +704,11 @@ func checkCRLFInjection(target string) ([]types.Finding, error) {
 	}
 
 	for _, payload := range crlfPayloads {
-		u := fmt.Sprintf("%s%s", strings.TrimRight(target, "/"), payload)
-		req, _ := http.NewRequest("GET", u, nil)
+		u := fmt.Sprintf("%s/%s", strings.TrimRight(target, "/"), payload)
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil || req == nil {
+			continue
+		}
 
 		resp, err := client.Do(req)
 		if err != nil {

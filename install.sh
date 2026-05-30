@@ -68,14 +68,13 @@ else
 fi
 
 # ─────────────────────────────────────────── Step 4: Go tools ────────────────────────────────────────────
-echo -e "${CYAN}[$((++STEP))/6]${NC} Installing 9 security tools (shows download size + speed)..."
+echo -e "${CYAN}[$((++STEP))/6]${NC} Installing 8 security tools via go install..."
 GO_TOOLS=(
     "nuclei:github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
     "subfinder:github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
     "httpx:github.com/projectdiscovery/httpx/cmd/httpx@latest"
     "katana:github.com/projectdiscovery/katana/cmd/katana@latest"
     "ffuf:github.com/ffuf/ffuf/v2@latest"
-    "trufflehog:github.com/trufflesecurity/trufflehog/v3@latest"
     "gau:github.com/lc/gau/v2/cmd/gau@latest"
     "gospider:github.com/jaeles-project/gospider@latest"
     "gobuster:github.com/OJ/gobuster/v3@latest"
@@ -143,25 +142,27 @@ for entry in "${GO_TOOLS[@]}"; do
         printf "\r  \033[K${RED}FAIL${NC} %-12s %s  [%d/%d]\n  \033[K${RED}→${NC} %s\n" \
             "$name" "$(fmt_time $e)" "$COMPLETED" "$TOTAL" "$err"
 
-        # trufflehog fallback: download pre-built binary
-        if [ "$name" = "trufflehog" ]; then
-            printf "  \033[K Trying pre-built binary...\n"
-            th_url="https://github.com/trufflesecurity/trufflehog/releases/latest/download/trufflehog_linux_amd64.tar.gz"
-            curl -sL "$th_url" -o /tmp/th.tar.gz 2>/dev/null
-            if [ $? -eq 0 ]; then
-                tar xzf /tmp/th.tar.gz -C /tmp/ 2>/dev/null
-                if [ $? -eq 0 ]; then
-                    sudo mv /tmp/trufflehog /usr/local/bin/ 2>/dev/null
-                    if command -v trufflehog &>/dev/null; then
-                        printf "  \033[K${GREEN}OK${NC}  trufflehog  (pre-built binary)\n"
-                    fi
-                fi
-            fi
-            rm -f /tmp/th.tar.gz /tmp/trufflehog
-        fi
         rm -f "$errf"
     fi
 done
+
+# ─────────────────── trufflehog (pre-built binary — avoids OOM from compiling 500+ deps) ───────────────────
+printf "  trufflehog  (downloading...)"
+th_start=$SECONDS
+th_url="https://github.com/trufflesecurity/trufflehog/releases/latest/download/trufflehog_linux_amd64.tar.gz"
+curl -sL "$th_url" -o /tmp/th.tar.gz 2>/dev/null
+if [ $? -eq 0 ]; then
+    tar xzf /tmp/th.tar.gz -C /tmp/ 2>/dev/null
+    if [ $? -eq 0 ]; then
+        sudo mv /tmp/trufflehog /usr/local/bin/ 2>/dev/null
+        if command -v trufflehog &>/dev/null; then
+            printf "\r  \033[K${GREEN}OK${NC}  trufflehog  %s  elapsed %s\n" \
+                "$(fmt_time $((SECONDS - th_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
+            COMPLETED=$((COMPLETED + 1))
+        fi
+    fi
+fi
+rm -f /tmp/th.tar.gz /tmp/trufflehog
 
 # ────────────────────────────────────────── Step 5: Build OmniScan ──────────────────────────────────────────
 echo -e "${CYAN}[$((++STEP))/6]${NC} Building OmniScan..."

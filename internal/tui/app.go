@@ -365,6 +365,9 @@ func (a *App) runOrchInBackground() {
 	errorsDone := false
 	for !resultsDone || !errorsDone {
 		select {
+		case <-a.orchCtx.Done():
+			resultsDone = true
+			errorsDone = true
 		case finding, ok := <-a.orch.Results():
 			if !ok {
 				resultsDone = true

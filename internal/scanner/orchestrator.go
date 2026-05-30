@@ -619,20 +619,21 @@ func (i *Installer) installNmap() error {
 }
 
 func (i *Installer) installNikto() error {
-	installDir := filepath.Join(i.ToolsDir, "nikto")
-	if _, err := os.Stat(installDir); err == nil {
-		return nil // already installed
+	bindir := filepath.Join(i.ToolsDir, "nikto")
+	// findTool("nikto", "tools/nikto") looks for "tools/nikto/nikto"
+	if _, err := os.Stat(filepath.Join(bindir, "nikto")); err == nil {
+		return nil
 	}
 	switch runtime.GOOS {
 	case "linux", "darwin":
-		// Clone nikto from GitHub
 		if err := os.MkdirAll(i.ToolsDir, 0755); err != nil {
 			return err
 		}
-		_, err := runCmd(context.Background(), "git", "clone", "--depth", "1", "https://github.com/sullo/nikto.git", installDir)
+		codedir := filepath.Join(i.ToolsDir, "nikto-code")
+		_ = os.RemoveAll(codedir)
+		_, err := runCmd(context.Background(), "git", "clone", "--depth", "1", "https://github.com/sullo/nikto.git", codedir)
 		if err != nil {
-			// Fallback: download and extract zip
-			_ = os.RemoveAll(installDir)
+			_ = os.RemoveAll(codedir)
 			tmpZip := filepath.Join(os.TempDir(), "nikto.zip")
 			defer os.Remove(tmpZip)
 			if err := downloadFile("https://github.com/sullo/nikto/archive/refs/heads/master.zip", tmpZip); err != nil {
@@ -641,22 +642,18 @@ func (i *Installer) installNikto() error {
 			if _, err := runCmd(context.Background(), "unzip", "-o", tmpZip, "-d", i.ToolsDir); err != nil {
 				return fmt.Errorf("nikto extract failed: %w", err)
 			}
-			if err := os.Rename(filepath.Join(i.ToolsDir, "nikto-master"), installDir); err != nil {
+			if err := os.Rename(filepath.Join(i.ToolsDir, "nikto-master"), codedir); err != nil {
 				return err
 			}
 		}
-		// Make nikto.pl executable and create a symlink wrapper
-		niktoPL := filepath.Join(installDir, "program", "nikto.pl")
+		niktoPL := filepath.Join(codedir, "program", "nikto.pl")
 		if err := os.Chmod(niktoPL, 0755); err != nil {
 			return err
 		}
-		// Create wrapper script in ToolsDir
-		wrapper := filepath.Join(i.ToolsDir, "nikto")
-		wrapperContent := "#!/bin/sh\nperl \"" + niktoPL + "\" \"$@\"\n"
-		if err := os.WriteFile(wrapper, []byte(wrapperContent), 0755); err != nil {
-			return err
-		}
-		return nil
+		_ = os.MkdirAll(bindir, 0755)
+		wrapper := filepath.Join(bindir, "nikto")
+		wrapperContent := "#!/bin/sh\nexec perl \"" + niktoPL + "\" \"$@\"\n"
+		return os.WriteFile(wrapper, []byte(wrapperContent), 0755)
 	case "windows":
 		return fmt.Errorf("nikto on Windows requires Perl. Install manually: https://github.com/sullo/nikto")
 	}
@@ -666,7 +663,7 @@ func (i *Installer) installNikto() error {
 func (i *Installer) installOpenVAS() error {
 	switch runtime.GOOS {
 	case "linux":
-		// Try apt-get; also try docker-based gvm
+		// Try apt-get
 		cmds := []string{
 			"apt-get install -y openvas",
 			"apt-get install -y gvm",
@@ -678,14 +675,20 @@ func (i *Installer) installOpenVAS() error {
 				return nil
 			}
 		}
-		// Try Docker-based approach
+		// Install docker if not present, then pull greenbone/gvm
+		_, _ = runCmd(context.Background(), "sh", "-c", "apt-get install -y docker.io 2>/dev/null")
 		_, err = runCmd(context.Background(), "docker", "pull", "greenbone/gvm")
 		if err == nil {
 			return nil
 		}
 		return fmt.Errorf("openvas install failed. Try: apt-get install openvas or docker pull greenbone/gvm")
 	case "darwin":
-		return fmt.Errorf("openvas on macOS: use Docker: docker pull greenbone/gvm")
+		_, _ = runCmd(context.Background(), "sh", "-c", "brew install --cask docker 2>/dev/null")
+		_, err := runCmd(context.Background(), "docker", "pull", "greenbone/gvm")
+		if err == nil {
+			return nil
+		}
+		return fmt.Errorf("openvas on macOS: brew install --cask docker && docker pull greenbone/gvm")
 	case "windows":
 		return fmt.Errorf("openvas on Windows: use Docker: docker pull greenbone/gvm")
 	}
@@ -693,15 +696,15 @@ func (i *Installer) installOpenVAS() error {
 }
 
 func (i *Installer) installZap() error {
-	zapPath := filepath.Join(i.ToolsDir, "zap")
-	if _, err := os.Stat(zapPath); err == nil {
+	bindir := filepath.Join(i.ToolsDir, "zap")
+	// findTool("zap", "tools/zap") looks for "tools/zap/zap"
+	if _, err := os.Stat(filepath.Join(bindir, "zap")); err == nil {
 		return nil
 	}
 	_ = os.MkdirAll(i.ToolsDir, 0755)
 
 	switch runtime.GOOS {
 	case "linux":
-		// Download latest ZAP Linux package from GitHub releases
 		resp, err := http.Get("https://api.github.com/repos/zaproxy/zaproxy/releases/latest")
 		if err != nil {
 			return fmt.Errorf("fetch ZAP release: %w", err)
@@ -716,8 +719,6 @@ func (i *Installer) installZap() error {
 		}
 		_ = resp.Body.Close()
 
-		// Download Linux tarball: ZAP_2.17.0_Linux.tar.gz
-		// The URL format is: https://github.com/zaproxy/zaproxy/releases/download/TAG/ZAP_VERSION_Linux.tar.gz
 		version := strings.TrimPrefix(release.TagName, "v")
 		url := fmt.Sprintf("https://github.com/zaproxy/zaproxy/releases/download/%s/ZAP_%s_Linux.tar.gz", release.TagName, version)
 		tmpTar := filepath.Join(os.TempDir(), "zap.tar.gz")
@@ -729,22 +730,27 @@ func (i *Installer) installZap() error {
 		if _, err := runCmd(context.Background(), "tar", "xzf", tmpTar, "-C", i.ToolsDir); err != nil {
 			return fmt.Errorf("extract ZAP failed: %w", err)
 		}
-		// Rename extracted dir to "zap"
+		// Rename extracted dir to "zap-dist", create wrapper at "zap/zap"
 		entries, _ := os.ReadDir(i.ToolsDir)
 		for _, e := range entries {
 			if e.IsDir() && strings.HasPrefix(e.Name(), "ZAP_") {
-				_ = os.Rename(filepath.Join(i.ToolsDir, e.Name()), zapPath)
+				_ = os.Rename(filepath.Join(i.ToolsDir, e.Name()), filepath.Join(i.ToolsDir, "zap-dist"))
 				break
 			}
 		}
-		// Make zap.sh executable
-		zapSH := filepath.Join(zapPath, "zap.sh")
+		zapSH := filepath.Join(i.ToolsDir, "zap-dist", "zap.sh")
+		if _, err := os.Stat(zapSH); err != nil {
+			// Try within a subdirectory
+			zapSH = filepath.Join(i.ToolsDir, "zap-dist", "ZAP", "zap.sh")
+		}
 		if _, err := os.Stat(zapSH); err == nil {
 			_ = os.Chmod(zapSH, 0755)
+		} else {
+			return fmt.Errorf("zap.sh not found after extraction: %w", err)
 		}
-		// Create wrapper
-		wrapper := filepath.Join(i.ToolsDir, "zap")
-		wrapperContent := "#!/bin/sh\n\"" + zapSH + "\" \"$@\"\n"
+		_ = os.MkdirAll(bindir, 0755)
+		wrapper := filepath.Join(bindir, "zap")
+		wrapperContent := "#!/bin/sh\nexec \"" + zapSH + "\" \"$@\"\n"
 		return os.WriteFile(wrapper, []byte(wrapperContent), 0755)
 	case "darwin":
 		_, err := runCmd(context.Background(), "brew", "install", "--cask", "zap")
@@ -757,7 +763,10 @@ func (i *Installer) installZap() error {
 
 func (i *Installer) installSemgrep() error {
 	switch runtime.GOOS {
-	case "linux", "darwin":
+	case "linux":
+		// Ensure python3-pip is installed, then pip install semgrep
+		_, _ = runCmd(context.Background(), "sh", "-c", "apt-get install -y python3-pip python3-venv 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "yum install -y python3-pip 2>/dev/null")
 		cmds := []string{
 			"pip3 install semgrep",
 			"pip install semgrep",
@@ -771,7 +780,23 @@ func (i *Installer) installSemgrep() error {
 				return nil
 			}
 		}
-		return fmt.Errorf("semgrep install failed: %w. Try: pip3 install semgrep", err)
+		return fmt.Errorf("semgrep install failed: %w. Try: apt-get install python3-pip && pip3 install semgrep", err)
+	case "darwin":
+		cmds := []string{
+			"pip3 install semgrep",
+			"pip install semgrep",
+			"python3 -m pip install semgrep",
+			"python -m pip install semgrep",
+			"brew install semgrep",
+		}
+		var err error
+		for _, c := range cmds {
+			_, err = runCmd(context.Background(), "sh", "-c", c+" 2>/dev/null")
+			if err == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("semgrep install failed: %w. Try: brew install semgrep or pip3 install semgrep", err)
 	case "windows":
 		return fmt.Errorf("semgrep on Windows: python -m pip install semgrep")
 	}

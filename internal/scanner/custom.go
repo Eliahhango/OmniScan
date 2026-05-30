@@ -228,6 +228,31 @@ var CustomChecks = []CustomCheck{
 		Description: "Insecure deserialization probes (Java, PHP, Python, Ruby)",
 		Check:       checkDeserialization,
 	},
+	{
+		Name:        "subdomain-enum",
+		Description: "DNS-based subdomain enumeration (brute-force common names)",
+		Check:       CheckSubdomainEnum,
+	},
+	{
+		Name:        "url-crawler",
+		Description: "HTML link crawler — discovers URLs from response bodies",
+		Check:       CheckURLCrawler,
+	},
+	{
+		Name:        "tech-fingerprint",
+		Description: "Technology stack fingerprinting (CMS, frameworks, servers, CDN/WAF)",
+		Check:       checkTechFingerprint,
+	},
+	{
+		Name:        "cisa-kev",
+		Description: "CISA Known Exploited Vulnerabilities check against scan findings",
+		Check:       checkCisaKEV,
+	},
+	{
+		Name:        "epss-score",
+		Description: "EPSS exploit probability scoring for discovered CVEs",
+		Check:       checkEPSS,
+	},
 }
 
 func checkIDOR(target string) ([]types.Finding, error) {

@@ -220,6 +220,9 @@ func (o *Orchestrator) runCrawling(ctx context.Context, scanID int64) error {
 		if parsed, err := url.ParseRequestURI(u); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			continue
 		}
+		if isStaticAsset(u) {
+			continue
+		}
 		o.sendResult(types.Finding{
 			ID:          fmt.Sprintf("crawl-%s", u),
 			Title:       "Discovered URL",
@@ -326,7 +329,28 @@ func (o *Orchestrator) activeTargets() []string {
 	return []string{o.cfg.Target}
 }
 
+var staticExtensions = []string{
+	".css", ".js", ".json", ".map",
+	".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp",
+	".woff", ".woff2", ".ttf", ".eot", ".otf",
+	".mp4", ".mp3", ".avi", ".mov",
+	".pdf", ".doc", ".docx", ".zip", ".tar", ".gz",
+}
+
+func isStaticAsset(u string) bool {
+	lower := strings.ToLower(u)
+	for _, ext := range staticExtensions {
+		if strings.HasSuffix(lower, ext) || strings.Contains(lower, ext+"?") {
+			return true
+		}
+	}
+	return false
+}
+
 func (o *Orchestrator) sendResult(finding types.Finding) {
+	if strings.HasSuffix(finding.ID, "-skip") {
+		return
+	}
 	normalizer.EnrichWithOWASP2025(&finding)
 	if finding.CVE != "" {
 		if score := o.epssClient.GetCachedEPSS(finding.CVE); score > 0 {

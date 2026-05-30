@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Eliahhango/OmniScan/pkg/types"
@@ -36,6 +37,8 @@ type ReportData struct {
 	OWASPCoverage int
 	OWASPCounts   map[string]int
 	GeneratedAt   string
+	RiskScore     float64
+	RiskLabel     string
 }
 
 func NewGenerator(outputDir string) *Generator {
@@ -115,6 +118,23 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 	data.CWECount = len(cweSet)
 	data.OWASPCoverage = len(owaspSet)
 
+	data.RiskScore = float64(data.SeverityBreakdown.Critical)*10 +
+		float64(data.SeverityBreakdown.High)*7 +
+		float64(data.SeverityBreakdown.Medium)*4 +
+		float64(data.SeverityBreakdown.Low)*1
+	switch {
+	case data.RiskScore >= 20:
+		data.RiskLabel = "Critical"
+	case data.RiskScore >= 10:
+		data.RiskLabel = "High"
+	case data.RiskScore >= 5:
+		data.RiskLabel = "Medium"
+	case data.RiskScore > 0:
+		data.RiskLabel = "Low"
+	default:
+		data.RiskLabel = "None"
+	}
+
 	var critical []types.Finding
 	for _, f := range findings {
 		if f.Severity == types.SeverityCritical || f.Severity == types.SeverityHigh {
@@ -134,6 +154,7 @@ func (g *Generator) GenerateHTML(data ReportData) (string, error) {
 		return "", err
 	}
 	funcMap := template.FuncMap{
+		"lower": strings.ToLower,
 		"percent": func(count, total int) string {
 			if total == 0 {
 				return "0%"
@@ -226,6 +247,7 @@ func (g *Generator) GeneratePDF(data ReportData) (string, error) {
 		return "", err
 	}
 	funcMap := template.FuncMap{
+		"lower": strings.ToLower,
 		"percent": func(count, total int) string {
 			if total == 0 {
 				return "0%"

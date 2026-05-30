@@ -18,6 +18,12 @@ const htmlTemplate = `<!DOCTYPE html>
   .cover .meta-box div { margin: 8px 0; color: #c9d1d9; }
   .cover .meta-box span { color: #58a6ff; font-weight: 600; }
   .cover .badge { display: inline-block; background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; padding: 8px 24px; border-radius: 20px; font-size: 0.9em; margin-top: 30px; }
+  .risk-badge { display: inline-block; padding: 6px 24px; border-radius: 20px; font-size: 1.1em; font-weight: 700; margin-top: 10px; }
+  .risk-critical { background: #f8514933; color: #f85149; border: 2px solid #f85149; }
+  .risk-high { background: #d2992233; color: #d29922; border: 2px solid #d29922; }
+  .risk-medium { background: #58a6ff33; color: #58a6ff; border: 2px solid #58a6ff; }
+  .risk-low { background: #3fb95033; color: #3fb950; border: 2px solid #3fb950; }
+  .risk-none { background: #8b949e33; color: #8b949e; border: 2px solid #8b949e; }
 
   .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
 
@@ -144,6 +150,11 @@ const htmlTemplate = `<!DOCTYPE html>
     <div><span>Distinct CWEs:</span> {{.CWECount}}</div>
     <div><span>OWASP Categories Affected:</span> {{.OWASPCoverage}}/10</div>
   </div>
+  {{if gt .TotalVulns 0}}
+  <div class="risk-badge risk-{{.RiskLabel | lower}}">Risk Score: {{printf "%.0f" .RiskScore}} / {{.RiskLabel}}</div>
+  {{else}}
+  <div class="risk-badge risk-none">Risk Score: 0 / None — No Vulnerabilities Found</div>
+  {{end}}
   <div style="margin-top: 40px; color: #8b949e; font-size: 0.85em;">
     Generated {{.GeneratedAt}} &mdash; Confidential
   </div>
@@ -155,10 +166,34 @@ const htmlTemplate = `<!DOCTYPE html>
 <h2><span class="section-num">1</span> Executive Summary</h2>
 <p style="color: #8b949e; margin-bottom: 20px;">
   This report presents the findings of a security assessment of <strong>{{.Target}}</strong>.
-  A total of <strong>{{.TotalVulns}}</strong> vulnerabilities were identified across
-  <strong>{{.OWASPCoverage}}</strong> OWASP Top 10:2025 categories.
-  The average CVSS score is <strong>{{printf "%.1f" .CVSSAvg}}</strong>.
+  A total of <strong>{{.TotalVulns}}</strong> vulnerabilities were identified.
+  Risk score: <strong>{{printf "%.0f" .RiskScore}}/{{.RiskLabel}}</strong>.
 </p>
+
+<div class="chart-container">
+  <h3 style="color: #f0f6fc; font-size: 1em; margin-bottom: 15px;">Severity Impact Reference</h3>
+  <table>
+    <tr><th>Severity</th><th>Impact</th></tr>
+    <tr><td><span class="severity-badge severity-critical">Critical</span></td><td>Immediate and severe threat. Could lead to full system compromise, data breach, or remote code execution. Requires urgent patching and mitigation within 24 hours.</td></tr>
+    <tr><td><span class="severity-badge severity-high">High</span></td><td>Significant security risk. Could lead to sensitive data exposure, privilege escalation, or service disruption. Should be addressed within one week.</td></tr>
+    <tr><td><span class="severity-badge severity-medium">Medium</span></td><td>Moderate risk. Could be exploited under specific conditions or in combination with other vulnerabilities. Should be addressed within one month.</td></tr>
+    <tr><td><span class="severity-badge severity-low">Low</span></td><td>Minor security concern. Limited impact or requires unlikely attack scenario. Should be addressed during next maintenance cycle.</td></tr>
+    <tr><td><span class="severity-badge severity-info">Info</span></td><td>Informational only. No direct security impact but useful for understanding the attack surface. Review for potential enrichment of other findings.</td></tr>
+  </table>
+</div>
+
+{{if eq .TotalVulns 0}}
+<div class="chart-container" style="text-align: center; padding: 40px;">
+  <h3 style="color: #3fb950; font-size: 1.3em; margin-bottom: 15px;">No Vulnerabilities Detected</h3>
+  <p style="color: #8b949e;">The scan completed successfully but no security vulnerabilities were found. This could mean:</p>
+  <ul style="color: #8b949e; text-align: left; display: inline-block; margin-top: 10px;">
+    <li>The target is well-secured with no known vulnerabilities</li>
+    <li>Not all scanning tools were installed on the scanning system</li>
+    <li>Additional authentication or configuration may be needed for deeper scanning</li>
+  </ul>
+  <p style="color: #8b949e; margin-top: 15px;"><strong>Recommendation:</strong> Run <code>omniscan setup</code> to install all tools, and consider adding API keys or authenticated scan configuration for comprehensive coverage.</p>
+</div>
+{{end}}
 
 <div class="stats">
   <div class="stat-card critical"><div class="count">{{.SeverityBreakdown.Critical}}</div><div class="label">Critical</div></div>

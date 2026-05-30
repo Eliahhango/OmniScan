@@ -29,28 +29,27 @@ func (n *Nikto) Run(ctx context.Context) error {
 			close(n.Results)
 		}
 	}()
+
+	if n.Results == nil {
+		return nil
+	}
+
 	niktoPath := findTool("nikto", filepath.Join(n.ToolsDir, "nikto"))
 	args := []string{"-h", n.Target, "-Format", "json", "-o", "-"}
 
 	cmd := exec.CommandContext(ctx, niktoPath, args...)
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		if n.Results != nil {
-			n.Results <- types.Finding{
-				ID:          "nikto-skip",
-				Title:       "Nikto not available",
-				Description: "Nikto scanner encountered an error and was skipped",
-				Severity:    types.SeverityInfo,
-				ToolSource:  "nikto",
-				Timestamp:   time.Now(),
-			}
-		}
+		return nil
+	}
+	cmd.Stderr = nil
+
+	if err := cmd.Start(); err != nil {
 		return nil
 	}
 
-	if n.Results != nil {
-		parseNiktoOutput(output, n.Results)
-	}
+	parseNiktoOutput(bufio.NewScanner(stdout), n.Results)
+	cmd.Wait()
 	return nil
 }
 
@@ -62,8 +61,7 @@ type niktoItem struct {
 	Description string `json:"description"`
 }
 
-func parseNiktoOutput(data []byte, results chan<- types.Finding) {
-	scanner := bufio.NewScanner(bytes.NewReader(data))
+func parseNiktoOutput(scanner *bufio.Scanner, results chan<- types.Finding) {
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {

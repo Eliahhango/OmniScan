@@ -477,11 +477,13 @@ func findToolMulti(names []string, extraPaths ...string) string {
 			}
 		}
 	}
-	// Search common Go binary directories
+	// Search common Go binary directories and pipx user install directory
 	homeDir, _ := os.UserHomeDir()
 	goDirs := []string{
 		filepath.Join(homeDir, "go", "bin"),
+		filepath.Join(homeDir, ".local", "bin"),
 		"/root/go/bin",
+		"/root/.local/bin",
 	}
 	if gh := os.Getenv("GOPATH"); gh != "" {
 		goDirs = append(goDirs, filepath.Join(gh, "bin"))
@@ -784,6 +786,11 @@ func (i *Installer) installSemgrep() error {
 		_, _ = runCmd(context.Background(), "sh", "-c", "pacman -S --noconfirm python-pip 2>/dev/null")
 		// Step 3: if pip still missing, try bootstrap.pypa.io
 		_, _ = runCmd(context.Background(), "sh", "-c", "curl -sL https://bootstrap.pypa.io/get-pip.py | python3 2>/dev/null")
+		// Step 4: try pipx (used by install.sh)
+		_, _ = runCmd(context.Background(), "pipx", "install", "semgrep")
+		if _, err := exec.LookPath("semgrep"); err == nil {
+			return nil
+		}
 		cmds := []string{
 			"pip3 install semgrep",
 			"pip install semgrep",

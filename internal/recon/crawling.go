@@ -37,19 +37,24 @@ func (k *Katana) Run(ctx context.Context) ([]string, error) {
 	input := strings.Join(k.Targets, "\n")
 	cmd := exec.CommandContext(ctx, "katana", args...)
 	cmd.Stdin = strings.NewReader(input)
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("katana: %w", err)
+		return nil, fmt.Errorf("katana stdout pipe: %w", err)
+	}
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("katana start: %w", err)
 	}
 
 	var urls []string
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
 			urls = append(urls, line)
 		}
 	}
+	cmd.Wait()
 
 	if k.Cache != nil {
 		k.Cache.Set(cacheKey, urls)
@@ -79,19 +84,24 @@ func (g *GAU) Run(ctx context.Context) ([]string, error) {
 	}
 
 	cmd := exec.CommandContext(ctx, "gau", g.Target)
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("gau: %w", err)
+		return nil, fmt.Errorf("gau stdout pipe: %w", err)
+	}
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("gau start: %w", err)
 	}
 
 	var urls []string
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
 			urls = append(urls, line)
 		}
 	}
+	cmd.Wait()
 
 	if g.Cache != nil {
 		g.Cache.Set(cacheKey, urls)

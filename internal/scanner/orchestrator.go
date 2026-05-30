@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,7 +148,7 @@ func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
 	subfinder.RateLimit = o.cfg.RateLimit
 	subfinder.Cache = o.reconCache
 	subdomains, err := subfinder.Run(ctx)
-	if err != nil {
+	if err != nil || len(subdomains) == 0 {
 		subdomains = []string{o.cfg.Target}
 	}
 
@@ -155,7 +156,7 @@ func (o *Orchestrator) runRecon(ctx context.Context, scanID int64) error {
 	httpx := recon.NewHttpx(subdomains)
 
 	alive, err := httpx.Run(ctx)
-	if err != nil {
+	if err != nil || len(alive) == 0 {
 		alive = subdomains
 	}
 
@@ -216,6 +217,9 @@ func (o *Orchestrator) runCrawling(ctx context.Context, scanID int64) error {
 	urls = uniqueStrings(urls)
 
 	for _, u := range urls {
+		if parsed, err := url.ParseRequestURI(u); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			continue
+		}
 		o.sendResult(types.Finding{
 			ID:          fmt.Sprintf("crawl-%s", u),
 			Title:       "Discovered URL",

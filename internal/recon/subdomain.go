@@ -35,19 +35,24 @@ func (s *Subfinder) Run(ctx context.Context) ([]string, error) {
 		args = append(args, "-rl", fmt.Sprintf("%d", s.RateLimit))
 	}
 	cmd := exec.CommandContext(ctx, "subfinder", args...)
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("subfinder: %w", err)
+		return nil, fmt.Errorf("subfinder stdout pipe: %w", err)
+	}
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("subfinder start: %w", err)
 	}
 
 	var subdomains []string
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
 			subdomains = append(subdomains, line)
 		}
 	}
+	cmd.Wait()
 
 	if s.Cache != nil {
 		s.Cache.Set(cacheKey, subdomains)
@@ -70,13 +75,17 @@ func (h *Httpx) Run(ctx context.Context) ([]string, error) {
 	input := strings.Join(h.Targets, "\n")
 	cmd := exec.CommandContext(ctx, "httpx", "-silent", "-status-code", "-title", "-tech-detect")
 	cmd.Stdin = strings.NewReader(input)
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("httpx: %w", err)
+		return nil, fmt.Errorf("httpx stdout pipe: %w", err)
+	}
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("httpx start: %w", err)
 	}
 
 	var alive []string
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		parts := strings.Split(line, " ")
@@ -86,6 +95,7 @@ func (h *Httpx) Run(ctx context.Context) ([]string, error) {
 			alive = append(alive, line)
 		}
 	}
+	cmd.Wait()
 	return alive, nil
 }
 
@@ -96,13 +106,17 @@ func (h *Httpx) RunWithTech(ctx context.Context) ([]ProbingResult, error) {
 	input := strings.Join(h.Targets, "\n")
 	cmd := exec.CommandContext(ctx, "httpx", "-silent", "-status-code", "-title", "-tech-detect")
 	cmd.Stdin = strings.NewReader(input)
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("httpx tech: %w", err)
+		return nil, fmt.Errorf("httpx stdout pipe: %w", err)
+	}
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("httpx start: %w", err)
 	}
 
 	var results []ProbingResult
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -162,6 +176,7 @@ func (h *Httpx) RunWithTech(ctx context.Context) ([]ProbingResult, error) {
 
 		results = append(results, pr)
 	}
+	cmd.Wait()
 
 	return results, nil
 }

@@ -90,8 +90,9 @@ for entry in "${GO_TOOLS[@]}"; do
     name="${entry%%:*}"
     pkg="${entry#*:}"
     start=$SECONDS
+    errf="/tmp/omniscan_${name}_err.txt"
 
-    go install "$pkg" >/dev/null 2>&1 &
+    go install "$pkg" >/dev/null 2>"$errf" &
     pid=$!
 
     spin='-\|/'
@@ -104,8 +105,8 @@ for entry in "${GO_TOOLS[@]}"; do
         # Check cache every ~1s for download tracking
         if [ $((i % 5)) -eq 0 ]; then
             cur=$(read_cache)
-            dl=$(( (cur - cache_start) / 1048576 ))   # total MB downloaded so far
-            dl_this=$(( (cur - cache_prev) / 1048576 )) # MB/s (check interval ~1s)
+            dl=$(( (cur - cache_start) / 1048576 ))
+            dl_this=$(( (cur - cache_prev) / 1048576 ))
             speed=$dl_this
             [ "$speed" -gt "$peak_speed" ] 2>/dev/null && peak_speed=$speed
             cache_prev=$cur
@@ -134,9 +135,31 @@ for entry in "${GO_TOOLS[@]}"; do
     if [ $rc -eq 0 ]; then
         printf "\r  \033[K${GREEN}OK${NC}  %-12s %s  +%dM  [%d/%d]  elapsed %s\n" \
             "$name" "$(fmt_time $e)" "$dl" "$COMPLETED" "$TOTAL" "$(fmt_time $((SECONDS - GLOBAL_START)))"
+        rm -f "$errf"
     else
-        printf "\r  \033[K${RED}FAIL${NC} %-12s %s  [%d/%d]\n" \
-            "$name" "$(fmt_time $e)" "$COMPLETED" "$TOTAL"
+        # Print error
+        err=$(head -8 "$errf" 2>/dev/null | tail -5 | tr '\n' ';')
+        [ -z "$err" ] && err="unknown error (check $errf)"
+        printf "\r  \033[K${RED}FAIL${NC} %-12s %s  [%d/%d]\n  \033[K${RED}→${NC} %s\n" \
+            "$name" "$(fmt_time $e)" "$COMPLETED" "$TOTAL" "$err"
+
+        # trufflehog fallback: download pre-built binary
+        if [ "$name" = "trufflehog" ]; then
+            printf "  \033[K Trying pre-built binary...\n"
+            th_url="https://github.com/trufflesecurity/trufflehog/releases/latest/download/trufflehog_linux_amd64.tar.gz"
+            curl -sL "$th_url" -o /tmp/th.tar.gz 2>/dev/null
+            if [ $? -eq 0 ]; then
+                tar xzf /tmp/th.tar.gz -C /tmp/ 2>/dev/null
+                if [ $? -eq 0 ]; then
+                    sudo mv /tmp/trufflehog /usr/local/bin/ 2>/dev/null
+                    if command -v trufflehog &>/dev/null; then
+                        printf "  \033[K${GREEN}OK${NC}  trufflehog  (pre-built binary)\n"
+                    fi
+                fi
+            fi
+            rm -f /tmp/th.tar.gz /tmp/trufflehog
+        fi
+        rm -f "$errf"
     fi
 done
 

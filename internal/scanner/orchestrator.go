@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Eliahhango/OmniScan/internal/db"
@@ -907,22 +908,78 @@ func (i *Installer) installTrufflehog() error {
 	return nil
 }
 
-// UpdateSelf rebuilds OmniScan from source via go install
-// Uses GOPROXY=direct to bypass Go module proxy cache and always fetch
-// the absolute latest commit from GitHub.
+// UpdateSelf rebuilds OmniScan from source.
+// Clones/fetches directly from GitHub (bypasses Go module proxy caching)
+// and re-execs into the new binary so the same invocation continues with
+// the updated code. The OMNISCAN_UPDATED env var prevents infinite re-exec.
 func UpdateSelf() error {
-	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "go", "install", "github.com/Eliahhango/OmniScan/cmd/omniscan@latest")
-	cmd.Env = append(os.Environ(), "GOPROXY=direct")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(output))
-		if msg != "" {
-			return fmt.Errorf("go install: %s", msg)
-		}
-		return fmt.Errorf("go install: %w", err)
+	if os.Getenv("OMNISCAN_UPDATED") != "" {
+		return nil
 	}
-	return nil
+
+	homeDir, _ := os.UserHomeDir()
+	repoDir := filepath.Join(homeDir, "OmniScan")
+	ctx := context.Background()
+
+	// Clone or pull the repo
+	if _, err := os.Stat(repoDir); err == nil {
+		_, _ = runCmd(ctx, "git", "-C", repoDir, "pull", "--ff-only")
+	} else {
+		if _, err := runCmd(ctx, "git", "clone", "--depth", "1",
+			"https://github.com/Eliahhango/OmniScan.git", repoDir); err != nil {
+			return fmt.Errorf("git clone: %w", err)
+		}
+	}
+
+	// Determine version string
+	ver := "dev"
+	if v, err := runCmd(ctx, "git", "-C", repoDir, "describe", "--tags", "--always"); err == nil {
+		if s := strings.TrimSpace(string(v)); s != "" {
+			ver = s
+		}
+	}
+
+	// Build from local source (no proxy involved)
+	output := filepath.Join(repoDir, "omniscan.new")
+	if _, err := runCmd(ctx, "go", "build",
+		"-ldflags",
+		fmt.Sprintf("-s -w -X github.com/Eliahhango/OmniScan/internal/version.Version=%s", ver),
+		"-o", output,
+		filepath.Join(repoDir, "cmd", "omniscan")); err != nil {
+		return fmt.Errorf("go build: %w", err)
+	}
+
+	// Install to GOPATH/bin
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		gopath = filepath.Join(homeDir, "go")
+	}
+	installPath := filepath.Join(gopath, "bin", "omniscan")
+	if err := os.Rename(output, installPath); err != nil {
+		// Cross-device rename fallback
+		copyFile(output, installPath)
+		os.Remove(output)
+	}
+
+	// Re-exec into the new binary so InstallAll() runs with updated code
+	os.Setenv("OMNISCAN_UPDATED", "1")
+	return syscall.Exec(installPath, os.Args, os.Environ())
+}
+
+// copyFile copies a file from src to dst (simple helper).
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // UpdateAll updates the binary and all integrated tools

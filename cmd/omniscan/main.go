@@ -331,7 +331,7 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 
 	if format == "skip" {
 		fmt.Println("  Skipping report generation.")
-		waitForExit()
+		waitForExit(reader)
 		return
 	}
 
@@ -396,7 +396,7 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 		if txtPath != "" {
 			viewReport(txtPath, reader)
 		}
-		waitForExit()
+		waitForExit(reader)
 		return
 	default:
 		fmt.Printf("  Unknown format: %s. Generating HTML instead.\n", format)
@@ -406,7 +406,7 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 
 	if genErr != nil {
 		fmt.Printf("  [!] Error generating %s report: %v\n", format, genErr)
-		waitForExit()
+		waitForExit(reader)
 		return
 	}
 	fmt.Printf("\n  Report saved to: %s\n", filePath)
@@ -415,7 +415,7 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 		filePath = txtPath
 	}
 	viewReport(filePath, reader)
-	waitForExit()
+	waitForExit(reader)
 }
 
 func viewReport(path string, reader *bufio.Reader) {
@@ -435,9 +435,9 @@ func viewReport(path string, reader *bufio.Reader) {
 	fmt.Println(string(data))
 }
 
-func waitForExit() {
+func waitForExit(reader *bufio.Reader) {
 	fmt.Print("\n  Press Enter to exit...")
-	bufio.NewReader(os.Stdin).ReadString('\n')
+	reader.ReadString('\n')
 }
 
 var severityRank = map[types.Severity]int{

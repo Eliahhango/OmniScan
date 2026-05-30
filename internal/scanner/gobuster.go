@@ -41,6 +41,8 @@ func (g *Gobuster) wordlistPath() string {
 		"/usr/share/wordlists/dirb/common.txt",
 		"/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
 		"/usr/local/share/wordlists/dirb/common.txt",
+		"/usr/share/seclists/Discovery/Web-Content/common.txt",
+		filepath.Join(os.Getenv("HOME"), "wordlists", "common.txt"),
 	}
 	for _, p := range candidates {
 		if _, err := os.Stat(p); err == nil {

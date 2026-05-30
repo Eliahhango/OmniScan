@@ -736,7 +736,6 @@ func (i *Installer) installZap() error {
 		if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 			return fmt.Errorf("decode ZAP release: %w", err)
 		}
-		_ = resp.Body.Close()
 
 		version := strings.TrimPrefix(release.TagName, "v")
 		url := fmt.Sprintf("https://github.com/zaproxy/zaproxy/releases/download/%s/ZAP_%s_Linux.tar.gz", release.TagName, version)

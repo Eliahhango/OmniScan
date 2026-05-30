@@ -118,8 +118,8 @@ func CheckURLCrawler(target string) ([]types.Finding, error) {
 	if err != nil {
 		return findings, nil
 	}
+	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
 	if err != nil {
 		return findings, nil
 	}
@@ -157,8 +157,8 @@ func CheckURLCrawler(target string) ([]types.Finding, error) {
 		if err != nil {
 			continue
 		}
+		defer r.Body.Close()
 		b, err := io.ReadAll(r.Body)
-		r.Body.Close()
 		if err != nil {
 			continue
 		}

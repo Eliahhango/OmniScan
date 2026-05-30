@@ -114,9 +114,9 @@ func (c *EPSSClient) GetEPSSBatch(cves []string) (map[string]float64, error) {
 		if err != nil {
 			continue
 		}
+		defer resp.Body.Close()
 
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
 		if err != nil {
 			continue
 		}

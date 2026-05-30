@@ -33,7 +33,9 @@ type ZAP struct {
 
 func generateAPIKey() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -144,7 +146,7 @@ func (z *ZAP) waitForReady(ctx context.Context, baseURL string) error {
 			if err != nil {
 				continue
 			}
-			resp.Body.Close()
+			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -207,9 +209,9 @@ func (z *ZAP) waitForScanComplete(ctx context.Context, baseURL string, scanID in
 			if err != nil {
 				continue
 			}
+			defer resp.Body.Close()
 
 			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
 			if err != nil {
 				continue
 			}

@@ -62,6 +62,9 @@ func (d *DuplicateDetector) loadSeen() error {
 		}
 		d.seen[cve] = true
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 

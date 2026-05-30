@@ -60,7 +60,7 @@ func (c *Client) Send(finding types.Finding) error {
 			lastErr = err
 			continue
 		}
-		resp.Body.Close()
+		defer resp.Body.Close()
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil
 		}
@@ -99,7 +99,7 @@ func (c *Client) SendBatch(findings []types.Finding) error {
 			lastErr = err
 			continue
 		}
-		resp.Body.Close()
+		defer resp.Body.Close()
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil
 		}

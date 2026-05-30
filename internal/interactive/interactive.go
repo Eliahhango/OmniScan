@@ -92,76 +92,91 @@ var scanCategories = []ScanCategory{
 
 func Run() {
 	reader := bufio.NewReader(os.Stdin)
-	protocol := "https://"
 	cfg, err := config.Load("omniscan.yaml")
 	if err != nil {
-		cfg, _ = config.Defaults()
+		d, dErr := config.Defaults()
+		if dErr != nil {
+			fmt.Fprintf(os.Stderr, "Fatal: config defaults failed: %v\n", dErr)
+			os.Exit(1)
+		}
+		cfg = d
 	}
 
 	printBanner()
 
-thephuckinstart:
-	fmt.Println()
-	fmt.Print("  Enter the website you want to scan (e.g., example.com): ")
-	target, _ := reader.ReadString('\n')
-	target = strings.TrimSpace(target)
+	target := getTarget(reader)
+	protocol := getProtocol(reader)
 
-	if target == "" || strings.Contains(target, "://") || !strings.Contains(target, ".") {
-		fmt.Println("  Invalid target. Enter a domain without http://")
-		goto thephuckinstart
+	for {
+		fmt.Println()
+		printScanList(target, protocol)
+
+		choice := getChoice(reader)
+
+		switch {
+		case choice == "Q":
+			fmt.Print("\n  Goodbye!\n")
+			return
+
+		case choice == "B":
+			target = getTarget(reader)
+			protocol = getProtocol(reader)
+			continue
+
+		case choice == "A":
+			runAllScans(cfg, target, protocol, reader)
+
+		case choice >= "0" && choice <= "9", choice == "10", choice == "11":
+			cat := findCategory(choice)
+			if cat != nil {
+				runCategory(cfg, target, protocol, cat, reader)
+			} else {
+				fmt.Println("  Invalid option!")
+				continue
+			}
+		case choice == "12":
+			runCustomPicker(cfg, target, protocol, reader)
+
+		default:
+			fmt.Println("  Invalid option!")
+			continue
+		}
+
+		fmt.Println()
+		fmt.Print("  Press Enter to continue...")
+		reader.ReadString('\n')
 	}
+}
 
+func getTarget(reader *bufio.Reader) string {
+	for {
+		fmt.Println()
+		fmt.Print("  Enter the website you want to scan (e.g., example.com): ")
+		target, _ := reader.ReadString('\n')
+		target = strings.TrimSpace(target)
+		if target == "" || strings.Contains(target, "://") || !strings.Contains(target, ".") {
+			fmt.Println("  Invalid target. Enter a domain without http://")
+			continue
+		}
+		return target
+	}
+}
+
+func getProtocol(reader *bufio.Reader) string {
 	fmt.Println()
 	fmt.Print("  Enter 1 for HTTP or 2 for HTTPS [2]: ")
 	proto, _ := reader.ReadString('\n')
-	proto = strings.TrimSpace(proto)
 	if strings.TrimSpace(proto) == "1" {
-		protocol = "http://"
-	} else {
-		protocol = "https://"
+		return "http://"
 	}
+	return "https://"
+}
 
-scanlist:
-	fmt.Println()
-	printScanList(target, protocol)
-
-askscan:
+func getChoice(reader *bufio.Reader) string {
 	fmt.Println()
 	fmt.Print("  Choose scan or action from the list above: ")
 	choice, _ := reader.ReadString('\n')
-	choice = strings.TrimSpace(strings.ToUpper(choice))
-
-	switch {
-	case choice == "Q":
-		fmt.Print("\n  Goodbye!\n")
-		return
-
-	case choice == "B":
-		goto thephuckinstart
-
-	case choice == "A":
-		runAllScans(cfg, target, protocol, reader)
-
-	case choice >= "0" && choice <= "9", choice == "10", choice == "11":
-		cat := findCategory(choice)
-		if cat != nil {
-			runCategory(cfg, target, protocol, cat, reader)
-		} else {
-			fmt.Println("  Invalid option!")
-			goto askscan
-		}
-	case choice == "12":
-		runCustomPicker(cfg, target, protocol, reader)
-
-	default:
-		fmt.Println("  Invalid option!")
-		goto askscan
-	}
-
-	fmt.Println()
-	fmt.Print("  Press Enter to continue...")
-	reader.ReadString('\n')
-	goto scanlist
+	return strings.TrimSpace(strings.ToUpper(choice))
 }
 
 func printBanner() {

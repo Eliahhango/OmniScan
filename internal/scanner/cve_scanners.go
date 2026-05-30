@@ -57,8 +57,8 @@ func checkTechFingerprint(target string) ([]types.Finding, error) {
 	if err != nil {
 		return findings, nil
 	}
+	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
 	if err != nil {
 		return findings, nil
 	}

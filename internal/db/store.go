@@ -151,9 +151,15 @@ func (s *Store) SaveFinding(scanID int64, f *types.Finding) error {
 	for i := range f.BountyPlatforms {
 		f.BountyPlatforms[i] = truncate(f.BountyPlatforms[i], maxFieldLen)
 	}
-	encPayload, _ := encrypt(f.Payload, s.key)
-	encProof, _ := encrypt(f.Proof, s.key)
-	_, err := s.db.Exec(
+	encPayload, err := encrypt(f.Payload, s.key)
+	if err != nil {
+		return fmt.Errorf("encrypt payload: %w", err)
+	}
+	encProof, err := encrypt(f.Proof, s.key)
+	if err != nil {
+		return fmt.Errorf("encrypt proof: %w", err)
+	}
+	_, err = s.db.Exec(
 		`INSERT OR REPLACE INTO findings (
 			id, scan_id, title, description, severity, cvss, cve, cwe,
 			owasp2025, affected_url, affected_param, payload, proof,
@@ -209,6 +215,9 @@ func (s *Store) GetFindings(scanID int64) ([]types.Finding, error) {
 		}
 		findings = append(findings, f)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return findings, nil
 }
 
@@ -263,6 +272,9 @@ func (s *Store) ListScans() ([]ScanRecord, error) {
 			return nil, err
 		}
 		records = append(records, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return records, nil
 }

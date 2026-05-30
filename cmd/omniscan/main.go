@@ -138,7 +138,12 @@ func runTUI(configPath string) {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		cfg, _ = config.Defaults()
+		if d, dErr := config.Defaults(); dErr == nil {
+			cfg = d
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: config defaults failed: %v\n", dErr)
+			os.Exit(1)
+		}
 	}
 
 	store, err := db.New(cfg.DBPath, cfg.Passphrase)
@@ -213,7 +218,12 @@ func runScan(configPath string) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Printf("Warning: could not load config: %v\n", err)
-		cfg, _ = config.Defaults()
+		d, dErr := config.Defaults()
+		if dErr != nil {
+			fmt.Fprintf(os.Stderr, "Fatal: config defaults failed: %v\n", dErr)
+			os.Exit(1)
+		}
+		cfg = d
 	}
 
 	store, err := db.New(cfg.DBPath, cfg.Passphrase)
@@ -483,7 +493,12 @@ func runDiff() {
 
 	cfg, err := config.Load("omniscan.yaml")
 	if err != nil {
-		cfg, _ = config.Defaults()
+		d, dErr := config.Defaults()
+		if dErr != nil {
+			fmt.Fprintf(os.Stderr, "Fatal: config defaults failed: %v\n", dErr)
+			os.Exit(1)
+		}
+		cfg = d
 	}
 	store, err := db.New(cfg.DBPath, cfg.Passphrase)
 	if err != nil {
@@ -568,7 +583,12 @@ func runDaemon(configPath string) {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		cfg, _ = config.Defaults()
+		if d, dErr := config.Defaults(); dErr == nil {
+			cfg = d
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: config defaults failed: %v\n", dErr)
+			os.Exit(1)
+		}
 	}
 	if cfg.Daemon.Listen != "" {
 		listen = cfg.Daemon.Listen
@@ -715,7 +735,12 @@ func runBounty(configPath string) {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		cfg, _ = config.Defaults()
+		if d, dErr := config.Defaults(); dErr == nil {
+			cfg = d
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: config defaults failed: %v\n", dErr)
+			os.Exit(1)
+		}
 	}
 
 	store, err := db.New(cfg.DBPath, cfg.Passphrase)

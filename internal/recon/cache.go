@@ -66,6 +66,9 @@ func (c *ResultCache) load() error {
 		c.data[key] = results
 		c.mu.Unlock()
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 

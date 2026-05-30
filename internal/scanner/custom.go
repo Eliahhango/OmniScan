@@ -892,17 +892,80 @@ func checkSecurityHeaders(target string) ([]types.Finding, error) {
 	defer resp.Body.Close()
 
 	securityHeaders := map[string]struct {
-		Name        string
-		Description string
-		Severity    types.Severity
+		Name          string
+		Description   string
+		Severity      types.Severity
+		CVSS          float64
+		CVSSVector    string
+		CWE           []string
+		OWASP         string
+		AttackScenario string
+		Evidence      string
+		Remediation   string
 	}{
-		"Content-Security-Policy":           {"Missing CSP", "No Content-Security-Policy — vulnerable to XSS and data injection", types.SeverityHigh},
-		"Strict-Transport-Security":         {"Missing HSTS", "No Strict-Transport-Security — no HTTPS enforcement", types.SeverityHigh},
-		"X-Frame-Options":                   {"Missing X-Frame-Options", "No X-Frame-Options — clickjacking risk", types.SeverityMedium},
-		"X-Content-Type-Options":            {"Missing X-Content-Type-Options", "No X-Content-Type-Options — MIME-sniffing risk", types.SeverityMedium},
-		"Referrer-Policy":                   {"Missing Referrer-Policy", "No Referrer-Policy — referrer leakage risk", types.SeverityLow},
-		"Permissions-Policy":                {"Missing Permissions-Policy", "No Permissions-Policy — feature permissions unconstrained", types.SeverityLow},
-		"X-XSS-Protection":                  {"Missing X-XSS-Protection", "No X-XSS-Protection header", types.SeverityLow},
+		"Content-Security-Policy": {
+			"Missing CSP",
+			"No Content-Security-Policy — vulnerable to XSS and data injection",
+			types.SeverityHigh, 6.1, "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+			[]string{"CWE-693", "CWE-1021"}, "A03:2021 – Injection",
+			"An attacker who identifies even a minor input reflection vulnerability could inject a script that silently exfiltrates session cookies to a remote server, potentially hijacking every logged-in user's account.",
+			"HTTP Response Headers:\n  ✗ Content-Security-Policy: [NOT PRESENT]",
+			"Set Content-Security-Policy header. Nginx: `add_header Content-Security-Policy \"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';\" always;`",
+		},
+		"Strict-Transport-Security": {
+			"Missing HSTS",
+			"No Strict-Transport-Security — no HTTPS enforcement",
+			types.SeverityHigh, 7.4, "AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:N",
+			[]string{"CWE-319"}, "A02:2021 – Cryptographic Failures",
+			"A user on public WiFi visits the site over HTTP (first visit or after cache clear). An attacker running sslstrip intercepts the connection before the HTTPS redirect fires, capturing login credentials in plaintext.",
+			"HTTP Response Headers:\n  ✗ Strict-Transport-Security: [NOT PRESENT]",
+			"Set Strict-Transport-Security header. Nginx: `add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\" always;`",
+		},
+		"X-Frame-Options": {
+			"Missing X-Frame-Options",
+			"No X-Frame-Options — clickjacking risk",
+			types.SeverityMedium, 4.3, "AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+			[]string{"CWE-1021"}, "A05:2021 – Security Misconfiguration",
+			"The site can be embedded in an iframe on any origin. An attacker overlays an invisible iframe of the site over a fake page, tricking users into clicking buttons they cannot see.",
+			"HTTP Response Headers:\n  ✗ X-Frame-Options: [NOT PRESENT]",
+			"Set X-Frame-Options header. Nginx: `add_header X-Frame-Options \"SAMEORIGIN\" always;`",
+		},
+		"X-Content-Type-Options": {
+			"Missing X-Content-Type-Options",
+			"No X-Content-Type-Options — MIME-sniffing risk",
+			types.SeverityMedium, 4.3, "AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+			[]string{"CWE-116"}, "A05:2021 – Security Misconfiguration",
+			"Browsers may sniff the MIME type of a response, potentially executing an uploaded file disguised as an image as a script.",
+			"HTTP Response Headers:\n  ✗ X-Content-Type-Options: [NOT PRESENT]",
+			"Set X-Content-Type-Options header. Nginx: `add_header X-Content-Type-Options \"nosniff\" always;`",
+		},
+		"Referrer-Policy": {
+			"Missing Referrer-Policy",
+			"No Referrer-Policy — referrer leakage risk",
+			types.SeverityLow, 3.1, "AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N",
+			[]string{"CWE-200"}, "A05:2021 – Security Misconfiguration",
+			"The full URL including path and query parameters is sent in the Referer header to external sites when users click outbound links. If URLs contain session tokens or user IDs, they may leak to third-parties.",
+			"HTTP Response Headers:\n  ✗ Referrer-Policy: [NOT PRESENT]",
+			"Set Referrer-Policy header. Nginx: `add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;`",
+		},
+		"Permissions-Policy": {
+			"Missing Permissions-Policy",
+			"No Permissions-Policy — feature permissions unconstrained",
+			types.SeverityLow, 2.6, "AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N",
+			[]string{"CWE-693"}, "A05:2021 – Security Misconfiguration",
+			"Injected scripts or rogue iframes have access to all browser APIs (camera, microphone, geolocation) by default.",
+			"HTTP Response Headers:\n  ✗ Permissions-Policy: [NOT PRESENT]",
+			"Set Permissions-Policy header. Nginx: `add_header Permissions-Policy \"camera=(), microphone=(), geolocation=(), payment=()\" always;`",
+		},
+		"X-XSS-Protection": {
+			"Missing X-XSS-Protection",
+			"No X-XSS-Protection header",
+			types.SeverityLow, 2.6, "AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N",
+			[]string{"CWE-79"}, "A03:2021 – Injection",
+			"Legacy browsers (IE, older Edge) lack the built-in XSS filter, increasing XSS risk for users on older systems.",
+			"HTTP Response Headers:\n  ✗ X-XSS-Protection: [NOT PRESENT]",
+			"Set X-XSS-Protection header. Nginx: `add_header X-XSS-Protection \"1; mode=block\" always;`",
+		},
 	}
 
 	presentHeaders := 0
@@ -912,14 +975,21 @@ func checkSecurityHeaders(target string) ([]types.Finding, error) {
 			continue
 		}
 		findings = append(findings, types.Finding{
-			ID:          fmt.Sprintf("sec-header-%s", strings.ToLower(header)),
-			Title:       info.Name,
-			Description: info.Description,
-			Severity:    info.Severity,
-			AffectedURL: target,
-			Remediation: fmt.Sprintf("Set the %s header in your server configuration", header),
-			ToolSource:  "custom-headers",
-			Timestamp:   time.Now(),
+			ID:             fmt.Sprintf("sec-header-%s", strings.ToLower(header)),
+			Title:          info.Name,
+			Description:    info.Description,
+			Severity:       info.Severity,
+			CVSS:           info.CVSS,
+			CVSSVector:     info.CVSSVector,
+			CWE:            info.CWE,
+			OWASP2025:      info.OWASP,
+			AffectedURL:    target,
+			AttackScenario: info.AttackScenario,
+			Evidence:       info.Evidence,
+			Remediation:    info.Remediation,
+			Verified:       true,
+			ToolSource:     "custom-headers",
+			Timestamp:      time.Now(),
 		})
 	}
 

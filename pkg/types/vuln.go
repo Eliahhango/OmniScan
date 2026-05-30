@@ -37,26 +37,29 @@ var StageNames = map[ScanStage]string{
 }
 
 type Finding struct {
-	ID             string    `json:"id"`
-	Title          string    `json:"title"`
-	Description    string    `json:"description"`
-	Severity       Severity  `json:"severity"`
-	CVSS           float64   `json:"cvss"`
-	CVE            string    `json:"cve,omitempty"`
-	CWE            []string  `json:"cwe,omitempty"`
-	OWASP2025      string    `json:"owasp2025,omitempty"`
-	AffectedURL    string    `json:"affected_url"`
-	AffectedParam  string    `json:"affected_param,omitempty"`
-	Payload        string    `json:"payload,omitempty"`
-	SecretHash     string    `json:"secret_hash,omitempty"`
-	Proof          string    `json:"proof,omitempty"`
-	Remediation    string    `json:"remediation,omitempty"`
-	ToolSource     string    `json:"tool_source"`
-	Timestamp      time.Time `json:"timestamp"`
-	CVSSVector     string    `json:"cvss_vector,omitempty"`
-	EPSS           float64   `json:"epss,omitempty"`
-	FalsePositive  bool      `json:"false_positive"`
-	BountyPlatforms []string `json:"bounty_platforms,omitempty"`
+	ID              string    `json:"id"`
+	Title           string    `json:"title"`
+	Description     string    `json:"description"`
+	Severity        Severity  `json:"severity"`
+	CVSS            float64   `json:"cvss"`
+	CVE             string    `json:"cve,omitempty"`
+	CWE             []string  `json:"cwe,omitempty"`
+	OWASP2025       string    `json:"owasp2025,omitempty"`
+	AffectedURL     string    `json:"affected_url"`
+	AffectedParam   string    `json:"affected_param,omitempty"`
+	Payload         string    `json:"payload,omitempty"`
+	SecretHash      string    `json:"secret_hash,omitempty"`
+	Proof           string    `json:"proof,omitempty"`
+	Remediation     string    `json:"remediation,omitempty"`
+	ToolSource      string    `json:"tool_source"`
+	Timestamp       time.Time `json:"timestamp"`
+	CVSSVector      string    `json:"cvss_vector,omitempty"`
+	EPSS            float64   `json:"epss,omitempty"`
+	FalsePositive   bool      `json:"false_positive"`
+	AttackScenario  string    `json:"attack_scenario,omitempty"`
+	Evidence        string    `json:"evidence,omitempty"`
+	Verified        bool      `json:"verified"`
+	BountyPlatforms []string  `json:"bounty_platforms,omitempty"`
 }
 
 type ScanPipeline struct {

@@ -23,11 +23,11 @@ fi
 # --- System packages ---
 echo -e "${CYAN}[2/6] Installing system packages (nmap, nikto, python3)...${NC}"
 sudo apt update -qq 2>/dev/null || true
-sudo apt install -y -qq nmap nikto python3-pip git 2>/dev/null || echo -e "${RED}Warning: some apt packages failed (nmap/nikto may need manual install)${NC}"
+sudo apt install -y -qq nmap nikto python3-pip git pipx 2>/dev/null || echo -e "${RED}Warning: some apt packages failed (nmap/nikto may need manual install)${NC}"
 
-# --- pip tools ---
-echo -e "${CYAN}[3/6] Installing semgrep...${NC}"
-pip3 install semgrep -q --break-system-packages 2>/dev/null || pip3 install semgrep -q 2>/dev/null || echo -e "${RED}Warning: semgrep install failed (try: pip3 install semgrep)${NC}"
+# --- pipx tools (pipx sidesteps Ubuntu's PEP 668 externally-managed-environment) ---
+echo -e "${CYAN}[3/6] Installing semgrep via pipx...${NC}"
+pipx install semgrep -q 2>/dev/null || echo -e "${RED}Warning: semgrep install failed (try: pipx install semgrep)${NC}"
 
 # --- Go tools ---
 echo -e "${CYAN}[4/6] Installing security tools (nuclei, subfinder, httpx, katana, ffuf, trufflehog, gau, gospider, gobuster)...${NC}"

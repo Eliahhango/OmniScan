@@ -76,8 +76,8 @@ type ReportData struct {
 
 	// Professional report sections
 	Scope                  string
-	Methodology            string
 	ExecutiveSummary       string
+	BusinessImpact         []string
 	StrategicRecommendations []string
 	ObservedStrengths      []string
 	Version                string
@@ -398,10 +398,48 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 
 	// Discovered URLs
 	for _, f := range info {
-		if f.ToolSource == "crawler" {
+		if f.ToolSource == "crawler" || f.ToolSource == "custom-url-crawler" {
 			data.DiscoveredURLs = append(data.DiscoveredURLs, URLRef{URL: f.AffectedURL, FoundBy: "Crawler"})
 		}
 	}
+
+	// Build port set from port scan findings
+	portSet := make(map[int]bool)
+	for _, f := range info {
+		if f.ToolSource == "custom-ports" && strings.Contains(f.Title, "Open Ports") {
+			for _, part := range strings.Split(f.Description, ",") {
+				var port int
+				fmt.Sscanf(strings.TrimSpace(part), ":%d", &port)
+				if port > 0 {
+					portSet[port] = true
+				}
+			}
+			break
+		}
+	}
+
+	// Collect detected technologies
+	var techNames []string
+	for _, f := range info {
+		if f.ToolSource == "custom-tech-fingerprint" && strings.HasPrefix(f.Title, "Technology Detected:") {
+			name := strings.TrimPrefix(f.Title, "Technology Detected: ")
+			if idx := strings.Index(name, " ("); idx >= 0 {
+				name = name[:idx]
+			}
+			techNames = append(techNames, name)
+		}
+	}
+
+	// Build dynamic report context
+	reportCtx := buildReportContext(target, vulns, info, &data, hostIP, dnsServers, txtRecords, txtStr, portSet, techNames)
+
+	// Build dynamic executive summary
+	if totalVulnCount > 0 {
+		data.ExecutiveSummary = buildDynamicExecutiveSummary(reportCtx)
+	}
+
+	// Build dynamic business impact
+	data.BusinessImpact = buildDynamicBusinessImpact(reportCtx)
 
 	// Header coverage gap
 	headerFindings := 0
@@ -422,48 +460,29 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 	}
 
 	// Chained attack scenario
-	data.ChainedAttack = `1. Attacker intercepts HTTP traffic (enabled by missing HSTS)
-2. Attacker injects malicious script into a response (no CSP to block it)
-3. Injected script embeds the site in an invisible iframe (no X-Frame-Options)
-4. User unknowingly interacts with the hidden frame (clickjacking)
-5. Session token is exfiltrated via Referer or script (no Referrer-Policy)`
+	data.ChainedAttack = buildDynamicChainedAttack(reportCtx)
 
 	// Remediation priority
-	if len(vulns) > 0 {
-		data.RemediationPriority = []RemediationEntry{
-			{"P1 — Immediate", "CSP, HSTS", "Within 48 hours", "~30 min"},
-			{"P2 — Short-term", "X-Content-Type-Options, X-Frame-Options", "Within 1 week", "~10 min"},
-			{"P3 — Routine", "Referrer-Policy, Permissions-Policy, X-XSS-Protection", "Next maintenance window", "~10 min"},
-		}
-	}
+	data.RemediationPriority = buildDynamicRemediationPriority(reportCtx)
 
-	data.OneFileFix = `add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';" always;
-add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
-add_header X-Content-Type-Options "nosniff" always;
-add_header X-Frame-Options "SAMEORIGIN" always;
-add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
-add_header X-XSS-Protection "1; mode=block" always;`
+	// One-file fix (only missing headers)
+	data.OneFileFix = buildDynamicOneFileFix(reportCtx)
 
-	data.CloudflareOption = "Since the site uses Cloudflare, all headers can be set via Transform Rules → Modify Response Header without touching the origin server."
+	// Cloudflare option (suppressed if not applicable)
+	data.CloudflareOption = buildCloudflareOption(reportCtx)
 
-	data.VerificationSteps = []string{
-		"1. securityheaders.com — Instant header grade (target: A or A+)",
-		"2. curl -I https://" + hostname + " — Inspect raw headers",
-		"3. Observatory by Mozilla (https://observatory.mozilla.org) — Deeper scoring",
-		"4. Re-run OmniScan — Confirm zero header-related findings",
-	}
+	// Dynamic verification steps
+	data.VerificationSteps = buildDynamicVerificationSteps(reportCtx)
 
-	data.NextSteps = []NextStepEntry{
-		{"Re-run scan with full tooling (ZAP, OpenVAS, FFUF)", "Current scan has < 40% tool coverage — critical findings may be hidden"},
-		{"Authenticated scan", "Admin panel and user-facing features were not tested"},
-		{"TruffleHog scan on public repos", "Check for leaked API keys or credentials"},
-		{"TLS/SSL audit", "Confirm TLS 1.2+ only; disable weak cipher suites"},
-	}
+	// Dynamic next steps
+	data.NextSteps = buildDynamicNextSteps(reportCtx)
 
 	// Build strategic recommendations
 	if len(vulns) > 0 {
 		recs := []string{}
+		if data.SeverityBreakdown.Critical > 0 {
+			recs = append(recs, "Critical severity findings require immediate attention. These vulnerabilities can lead to complete system compromise if exploited.")
+		}
 		if data.SeverityBreakdown.High > 0 {
 			recs = append(recs, "Prioritize remediation of High severity findings within one week. These vulnerabilities can lead to sensitive data exposure or unauthorized access if exploited.")
 		}
@@ -480,25 +499,21 @@ add_header X-XSS-Protection "1; mode=block" always;`
 		}
 	}
 
-	// Build observed strengths
-	strengths := []string{}
-	strengths = append(strengths, "Cloudflare DNS and proxy in use — Provides inherent DDoS protection, CDN caching, and a platform for rapid security header deployment via Transform Rules.")
-	strengths = append(strengths, "HTTPS is available — Port 443 is open and functional; the foundation for secure transport is already in place.")
-	strengths = append(strengths, "Google site verification present — Suggests active site management and attention to configuration.")
-	strengths = append(strengths, "No exposed sensitive ports — Only ports 80 and 443 were detected open; no database, SSH, or admin ports are publicly accessible.")
-	data.ObservedStrengths = strengths
+	// Dynamic observed strengths
+	data.ObservedStrengths = buildDynamicStrengths(reportCtx)
 
-	// Build glossary
-	data.Glossary = []GlossaryEntry{
-		{"CSP", "Content Security Policy — controls which resources a browser is permitted to load"},
-		{"HSTS", "HTTP Strict Transport Security — forces HTTPS for all future connections"},
-		{"XSS", "Cross-Site Scripting — injection of malicious scripts into a trusted web page"},
-		{"Clickjacking", "Tricking a user into clicking a hidden UI element by overlaying a transparent iframe"},
-		{"MITM", "Man-in-the-Middle — an attacker secretly intercepts and possibly alters communications"},
-		{"MIME Sniffing", "Browser behavior of guessing content type, ignoring the declared Content-Type header"},
-		{"CVSS", "Common Vulnerability Scoring System — standardized 0–10 severity scoring"},
-		{"CWE", "Common Weakness Enumeration — catalog of software weakness categories"},
-		{"OWASP", "Open Web Application Security Project — global standard for web security"},
+	// Dynamic glossary
+	data.Glossary = buildDynamicGlossary(reportCtx)
+
+	// Update DNS provider in footprint (detected dynamically)
+	for i, e := range data.InfraFootprint {
+		if e.Component == "DNS Provider" {
+			if reportCtx.isCloudflare {
+				data.InfraFootprint[i].Details = "Cloudflare"
+			} else if len(dnsServers) > 0 && dnsServers[0] != "" {
+				data.InfraFootprint[i].Details = dnsServers[0]
+			}
+		}
 	}
 
 	return data

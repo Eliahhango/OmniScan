@@ -5,11 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-		"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -142,6 +142,51 @@ var CustomChecks = []CustomCheck{
 		Name:        "js-secrets",
 		Description: "Scan JavaScript files for exposed secrets",
 		Check:       checkJSSecrets,
+	},
+	{
+		Name:        "ssrf-detection",
+		Description: "SSRF detection via webhook, URL proxy, and cloud metadata endpoints",
+		Check:       checkSSRF,
+	},
+	{
+		Name:        "path-traversal",
+		Description: "Path traversal / LFI probes on common endpoints",
+		Check:       checkPathTraversal,
+	},
+	{
+		Name:        "open-redirect",
+		Description: "Open redirect detection on redirect_uri, next, continue params",
+		Check:       checkOpenRedirect,
+	},
+	{
+		Name:        "s3-bucket-enum",
+		Description: "S3 bucket enumeration via URL patterns and public access",
+		Check:       checkS3Buckets,
+	},
+	{
+		Name:        "git-exposure",
+		Description: "Git repository exposure (.git/config, .git/HEAD)",
+		Check:       checkGitExposure,
+	},
+	{
+		Name:        "cors-misconfig",
+		Description: "CORS misconfiguration detection",
+		Check:       checkCORS,
+	},
+	{
+		Name:        "error-disclosure",
+		Description: "Error message / stack trace leakage in responses",
+		Check:       checkErrorDisclosure,
+	},
+	{
+		Name:        "subdomain-takeover",
+		Description: "Subdomain takeover check via CNAME analysis",
+		Check:       checkSubdomainTakeover,
+	},
+	{
+		Name:        "exposed-endpoints",
+		Description: "Exposed admin, internal, and sensitive endpoints",
+		Check:       checkExposedEndpoints,
 	},
 }
 
@@ -1193,6 +1238,629 @@ func checkJSSecrets(target string) ([]types.Finding, error) {
 	}
 
 	return findings, nil
+}
+
+var ssrfPayloads = []string{
+	"http://169.254.169.254/latest/meta-data/",
+	"http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+	"http://metadata.google.internal/computeMetadata/v1/",
+	"http://100.100.100.200/latest/meta-data/",
+	"http://127.0.0.1:22",
+	"http://127.0.0.1:6379",
+	"file:///etc/passwd",
+	"gopher://127.0.0.1:6379/_INFO",
+}
+
+var ssrfParams = []string{"url", "uri", "path", "file", "fetch", "proxy", "callback", "webhook", "src", "href", "dest", "redirect", "continue", "next", "returnUrl", "imageUrl"}
+
+func checkSSRF(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	// First try common SSRF-vulnerable endpoints with URL params
+	endpoints := []string{
+		target + "/api/proxy?url=",
+		target + "/fetch?url=",
+		target + "/api/fetch?url=",
+		target + "/proxy?url=",
+		target + "/webhook?url=",
+		target + "/api/webhook?url=",
+		target + "/thumbnail?url=",
+		target + "/api/import?url=",
+		target + "/download?url=",
+	}
+
+	for _, base := range endpoints {
+		for _, payload := range ssrfPayloads {
+			u := base + payload
+			resp, err := sharedClient.Get(u)
+			if err != nil {
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				continue
+			}
+			bodyStr := string(body)
+			if strings.Contains(bodyStr, "ami-id") || strings.Contains(bodyStr, "instance-id") ||
+				strings.Contains(bodyStr, "security-credentials") || strings.Contains(bodyStr, "computeMetadata") {
+				findings = append(findings, types.Finding{
+					ID:          fmt.Sprintf("ssrf-awsmeta-%x", sha256.Sum256([]byte(u)))[:24],
+					Title:       "SSRF to AWS Metadata Endpoint",
+					Severity:    types.SeverityCritical,
+					AffectedURL: base,
+					CWE:         []string{"CWE-918"},
+					OWASP2025:   "Server-Side Request Forgery (SSRF)",
+					CVSS:        9.1,
+					CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:L",
+					Description: fmt.Sprintf("SSRF to AWS metadata endpoint via %s parameter. Attacker can extract IAM credentials.", base),
+					AttackScenario: fmt.Sprintf("1. Attacker sends %s\n2. Server fetches AWS metadata at 169.254.169.254\n3. IAM credentials are extracted and used for privilege escalation", u),
+					Evidence:     fmt.Sprintf("Response contained AWS metadata markers:\n%s", bodyStr[:min(len(bodyStr), 500)]),
+					Remediation:  "Validate and sanitize URL inputs. Block requests to internal/cloud metadata IPs (169.254.169.254, 100.100.100.200, metadata.google.internal). Use an allowlist of permitted domains.",
+					ToolSource:   "custom-ssrf",
+					Timestamp:    time.Now(),
+					Verified:     true,
+				})
+			}
+		}
+	}
+
+	// Check if common SSRF-vulnerable params accept external URLs
+	ssrfParamTestURLs := []string{target + "/", target + "/api/", target + "/v1/"}
+	for _, bu := range ssrfParamTestURLs {
+		for _, param := range ssrfParams {
+			u := fmt.Sprintf("%s?%s=http://httpbin.org/get", bu, param)
+			resp, err := sharedClient.Get(u)
+			if err != nil {
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				continue
+			}
+			if strings.Contains(string(body), "httpbin") {
+				findings = append(findings, types.Finding{
+					ID:          fmt.Sprintf("ssrf-param-%s-%x", param, sha256.Sum256([]byte(u)))[:24],
+					Title:       fmt.Sprintf("Potential SSRF via %s parameter", param),
+					Severity:    types.SeverityMedium,
+					AffectedURL: u,
+					CWE:         []string{"CWE-918"},
+					OWASP2025:   "Server-Side Request Forgery (SSRF)",
+					CVSS:        5.3,
+					CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+					Description: fmt.Sprintf("The %s parameter appears to fetch external URLs and reflect the content. This can be escalated to access internal services.", param),
+					AttackScenario: fmt.Sprintf("1. Attacker identifies %s parameter that fetches URLs\n2. Sends request to internal services (AWS metadata, localhost)\n3. Extracts sensitive data or pivots to internal network", param),
+					Evidence:     fmt.Sprintf("Parameter %s at %s accepted external URL and reflected httpbin content", param, bu),
+					Remediation:  "Implement URL allowlisting. Block requests to private/internal IP ranges. Validate the URL scheme (only allow http/https to known domains).",
+					ToolSource:   "custom-ssrf",
+					Timestamp:    time.Now(),
+					Verified:     true,
+				})
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+var traversalPayloads = []struct{ file, desc string }{
+	{"../../../etc/passwd", "/etc/passwd (Unix)"},
+	{"....//....//....//etc/passwd", "/etc/passwd (double-dot variant)"},
+	{"/%2e%2e/%2e%2e/%2e%2e/etc/passwd", "/etc/passwd (URL-encoded)"},
+	{"..\\..\\..\\windows\\win.ini", "win.ini (Windows)"},
+	{"../../../etc/hosts", "/etc/hosts (Unix)"},
+	{"/%c0%ae%c0%ae/%c0%ae%c0%ae/%c0%ae%c0%ae/etc/passwd", "/etc/passwd (UTF-8 overlong)"},
+}
+
+var traversalParams = []string{"file", "path", "page", "template", "include", "doc", "folder", "locale", "lang", "download", "filename", "filepath", "dir", "content", "root"}
+
+func checkPathTraversal(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	endpoints := []string{target + "/", target + "/api/", target + "/view", target + "/download"}
+
+	for _, ep := range endpoints {
+		for _, param := range traversalParams {
+			for _, payload := range traversalPayloads {
+				u := fmt.Sprintf("%s?%s=%s", ep, param, payload.file)
+				resp, err := sharedClient.Get(u)
+				if err != nil {
+					continue
+				}
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					continue
+				}
+				bodyStr := string(body)
+				if strings.Contains(bodyStr, "root:") || strings.Contains(bodyStr, "[extensions]") ||
+					strings.Contains(bodyStr, "daemon:") || strings.Contains(bodyStr, "nobody:") {
+					findings = append(findings, types.Finding{
+						ID:           fmt.Sprintf("traversal-%s-%x", param, sha256.Sum256([]byte(u)))[:24],
+						Title:        fmt.Sprintf("Path Traversal / LFI via %s parameter", param),
+						Severity:     types.SeverityCritical,
+						AffectedURL:  u,
+						CWE:          []string{"CWE-22"},
+						OWASP2025:    "Broken Access Control",
+						CVSS:         7.5,
+						CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+						Description:  fmt.Sprintf("Path traversal on %s via %s parameter using payload %s. Sensitive system files are exposed.", ep, param, payload.desc),
+						AttackScenario: fmt.Sprintf("1. Attacker sends %s\n2. Server reads %s from the filesystem\n3. Sensitive system data is exposed, enabling further attacks", u, payload.file),
+						Evidence:     fmt.Sprintf("Response contained sensitive system file content:\n%s", bodyStr[:min(len(bodyStr), 300)]),
+						Remediation:  "Normalize file paths before resolution. Use a secure allowlist of permitted files/directories. Reject inputs containing .., /, \\, or URL-encoded variants.",
+						ToolSource:   "custom-path-traversal",
+						Timestamp:    time.Now(),
+						Verified:     true,
+					})
+				}
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+var openRedirectParams = []string{"redirect_uri", "redirect", "next", "continue", "dest", "return", "return_to", "goto", "url", "target", "redir", "origin", "fallback", "callback_url", "return_url"}
+
+var openRedirectPayloads = []string{
+	"https://evil.com",
+	"//evil.com",
+	"https:evil.com",
+	"/\\evil.com",
+	"https://evil.com%23.target.com",
+	"javascript:alert(1)",
+	"data:text/html,<script>alert(1)</script>",
+}
+
+func checkOpenRedirect(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	endpoints := []string{target + "/", target + "/login", target + "/oauth/authorize", target + "/api/auth"}
+
+	for _, ep := range endpoints {
+		for _, param := range openRedirectParams {
+			for _, payload := range openRedirectPayloads {
+				if strings.HasPrefix(payload, "javascript:") || strings.HasPrefix(payload, "data:") {
+					continue // skip non-HTTP redirect tests for standard GET
+				}
+				u := fmt.Sprintf("%s?%s=%s", ep, param, payload)
+				resp, err := sharedClient.Get(u)
+				if err != nil {
+					continue
+				}
+				resp.Body.Close()
+				loc := resp.Header.Get("Location")
+				if loc == "" {
+					continue
+				}
+				locLower := strings.ToLower(loc)
+				if strings.Contains(locLower, "evil.com") || strings.Contains(locLower, "//evil") {
+					findings = append(findings, types.Finding{
+						ID:           fmt.Sprintf("open-redir-%s-%x", param, sha256.Sum256([]byte(u)))[:24],
+						Title:        fmt.Sprintf("Open Redirect via %s parameter", param),
+						Severity:     types.SeverityMedium,
+						AffectedURL:  u,
+						CWE:          []string{"CWE-601"},
+						OWASP2025:    "Broken Access Control",
+						CVSS:         4.7,
+						CVSSVector:   "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+						Description:  fmt.Sprintf("The %s parameter allows unvalidated redirect to external domains. Attacker can phish users by redirecting them to malicious sites via a trusted domain.", param),
+						AttackScenario: fmt.Sprintf("1. Attacker crafts %s?%s=https://evil.com\n2. Victim clicks link, sees trusted domain in URL\n3. Victim is redirected to phishing page and enters credentials", target, param),
+						Evidence:     fmt.Sprintf("GET %s\nLocation: %s", u, loc),
+						Remediation:  "Validate redirect URLs against an allowlist. Use relative redirects or a redirect proxy page with user confirmation.",
+						ToolSource:   "custom-open-redirect",
+						Timestamp:    time.Now(),
+						Verified:     true,
+					})
+				}
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+func checkS3Buckets(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	hostname := strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://")
+	hostname = strings.Split(hostname, "/")[0]
+	parts := strings.Split(hostname, ".")
+	if len(parts) < 2 {
+		return nil, nil
+	}
+	baseName := parts[len(parts)-2]
+	// Generate candidate bucket names
+	buckets := []string{
+		fmt.Sprintf("https://%s.s3.amazonaws.com", baseName),
+		fmt.Sprintf("https://%s.s3-us-west-2.amazonaws.com", baseName),
+		fmt.Sprintf("https://%s.s3-us-east-1.amazonaws.com", baseName),
+		fmt.Sprintf("https://%s.s3.eu-west-1.amazonaws.com", baseName),
+		fmt.Sprintf("https://%s-prod.s3.amazonaws.com", baseName),
+		fmt.Sprintf("https://%s-dev.s3.amazonaws.com", baseName),
+		fmt.Sprintf("https://%s-staging.s3.amazonaws.com", baseName),
+		fmt.Sprintf("https://www.%s.s3.amazonaws.com", baseName),
+	}
+
+	for _, bucket := range buckets {
+		resp, err := sharedClient.Get(bucket)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		bodyStr := string(body)
+		if resp.StatusCode == 200 && (strings.Contains(bodyStr, "<Contents>") || strings.Contains(bodyStr, "<ListBucketResult")) {
+			findings = append(findings, types.Finding{
+				ID:          fmt.Sprintf("s3-bucket-%x", sha256.Sum256([]byte(bucket)))[:24],
+				Title:       "S3 Bucket Publicly Accessible",
+				Severity:    types.SeverityHigh,
+				AffectedURL: bucket,
+				CWE:         []string{"CWE-200"},
+				OWASP2025:   "Security Misconfiguration",
+				CVSS:        7.5,
+				CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+				Description: fmt.Sprintf("S3 bucket '%s' is publicly accessible and lists its contents. Sensitive files may be exposed.", bucket),
+				AttackScenario: fmt.Sprintf("1. Attacker enumerates S3 buckets via known patterns (company-name, company-name-prod)\n2. Bucket %s returns directory listing\n3. Attacker downloads all exposed files for intelligence gathering", bucket),
+				Evidence:     fmt.Sprintf("GET %s returned 200 with S3 listing:\n%s", bucket, bodyStr[:min(len(bodyStr), 500)]),
+				Remediation:  "Enable 'Block all public access' on the S3 bucket. Use bucket policies to restrict access to authorized principals only. Consider enabling S3 access logging.",
+				ToolSource:   "custom-s3",
+				Timestamp:    time.Now(),
+				Verified:     true,
+			})
+		} else if resp.StatusCode == 200 || resp.StatusCode == 403 {
+			findings = append(findings, types.Finding{
+				ID:          fmt.Sprintf("s3-exists-%x", sha256.Sum256([]byte(bucket)))[:24],
+				Title:       "S3 Bucket Exists (Potential Takeover Target)",
+				Severity:    types.SeverityInfo,
+				AffectedURL: bucket,
+				CWE:         []string{"CWE-200"},
+				OWASP2025:   "Security Misconfiguration",
+				CVSS:        0,
+				Description: fmt.Sprintf("S3 bucket '%s' exists and responds. Verify access controls.", bucket),
+				Remediation: "Ensure the bucket has proper access controls and is not publicly writable.",
+				ToolSource:  "custom-s3",
+				Timestamp:   time.Now(),
+			})
+		}
+	}
+
+	return findings, nil
+}
+
+func checkGitExposure(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	gitPaths := []string{"/.git/config", "/.git/HEAD", "/.git/refs/heads/master", "/.git/index"}
+
+	for _, gp := range gitPaths {
+		u := strings.TrimRight(target, "/") + gp
+		resp, err := sharedClient.Get(u)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		bodyStr := string(body)
+		if resp.StatusCode == 200 && (strings.Contains(bodyStr, "[core]") || strings.Contains(bodyStr, "ref: refs/heads/") ||
+			strings.Contains(bodyStr, "[remote \"origin\"]") || strings.HasPrefix(bodyStr, "DIRC")) {
+			findings = append(findings, types.Finding{
+				ID:          fmt.Sprintf("git-exposed-%s-%x", gp, sha256.Sum256([]byte(u)))[:24],
+				Title:       "Git Repository Exposed",
+				Severity:    types.SeverityHigh,
+				AffectedURL: u,
+				CWE:         []string{"CWE-538"},
+				OWASP2025:   "Security Misconfiguration",
+				CVSS:        7.5,
+				CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+				Description: fmt.Sprintf("Git repository metadata is publicly accessible at %s. Source code, commit history, and potentially credentials are exposed.", u),
+				AttackScenario: fmt.Sprintf("1. Attacker accesses %s\n2. Downloads the entire .git directory using tools like git-dumper\n3. Extracts source code, hardcoded secrets, and sensitive configuration from commit history", u),
+				Evidence:     fmt.Sprintf("GET %s returned 200 with Git metadata:\n%s", u, bodyStr[:min(len(bodyStr), 500)]),
+				Remediation:  "Add a rule to block access to /.git/ paths at the web server or WAF level. Ensure .git directory is not deployed to production.",
+				ToolSource:   "custom-git",
+				Timestamp:    time.Now(),
+				Verified:     true,
+			})
+		}
+	}
+
+	return findings, nil
+}
+
+func checkCORS(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+
+	req, err := http.NewRequest("GET", target, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Origin", "https://evil.com")
+	resp, err := sharedClient.Do(req)
+	if err != nil {
+		return findings, nil
+	}
+	defer resp.Body.Close()
+
+	acao := resp.Header.Get("Access-Control-Allow-Origin")
+	acac := resp.Header.Get("Access-Control-Allow-Credentials")
+
+	if acao == "*" && strings.ToLower(acac) == "true" {
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("cors-wildcard-cred-%x", sha256.Sum256([]byte(target)))[:24],
+			Title:       "CORS Misconfiguration — Wildcard Origin with Credentials",
+			Severity:    types.SeverityHigh,
+			AffectedURL: target,
+			CWE:         []string{"CWE-942"},
+			OWASP2025:   "Broken Access Control",
+			CVSS:        7.5,
+			CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+			Description: "The server responds with Access-Control-Allow-Origin: * AND Access-Control-Allow-Credentials: true. This is forbidden by the spec and browsers will refuse it, but it indicates serious misconfiguration.",
+			AttackScenario: "1. Attacker hosts malicious page on evil.com\n2. Page makes authenticated CORS request to target\n3. Despite spec violation, misconfigured proxies/CDNs may still expose data",
+			Evidence:     fmt.Sprintf("Origin: https://evil.com\nAccess-Control-Allow-Origin: %s\nAccess-Control-Allow-Credentials: %s", acao, acac),
+			Remediation:  "Never use wildcard origin with credentials. Set Access-Control-Allow-Origin to the specific trusted domain. Use a validated allowlist.",
+			ToolSource:   "custom-cors",
+			Timestamp:    time.Now(),
+			Verified:     true,
+		})
+	} else if acao == "https://evil.com" && strings.ToLower(acac) == "true" {
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("cors-reflect-origin-%x", sha256.Sum256([]byte(target)))[:24],
+			Title:       "CORS Misconfiguration — Origin Reflection with Credentials",
+			Severity:    types.SeverityHigh,
+			AffectedURL: target,
+			CWE:         []string{"CWE-942"},
+			OWASP2025:   "Broken Access Control",
+			CVSS:        7.5,
+			CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+			Description: "The server reflects the Origin header back in Access-Control-Allow-Origin AND allows credentials. Any website can make authenticated cross-origin requests.",
+			AttackScenario: "1. Attacker hosts malicious page on evil.com\n2. Victim visits evil.com while authenticated to target\n3. Malicious page makes CORS requests to target, exfiltrating user data",
+			Evidence:     fmt.Sprintf("Origin: https://evil.com\nAccess-Control-Allow-Origin: %s\nAccess-Control-Allow-Credentials: %s", acao, acac),
+			Remediation:  "Do not reflect arbitrary Origin headers. Use a strict allowlist of trusted domains. Validate Origin against the allowlist before mirroring.",
+			ToolSource:   "custom-cors",
+			Timestamp:    time.Now(),
+			Verified:     true,
+		})
+	} else if acao == "*" {
+		findings = append(findings, types.Finding{
+			ID:          fmt.Sprintf("cors-wildcard-%x", sha256.Sum256([]byte(target)))[:24],
+			Title:       "CORS Misconfiguration — Wildcard Origin",
+			Severity:    types.SeverityLow,
+			AffectedURL: target,
+			CWE:         []string{"CWE-942"},
+			OWASP2025:   "Broken Access Control",
+			CVSS:        2.6,
+			CVSSVector:  "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+			Description: "Access-Control-Allow-Origin is set to *. While credentials won't be sent, public endpoints may be unnecessarily exposed to cross-origin reads.",
+			Remediation:  "Restrict Access-Control-Allow-Origin to specific trusted domains. Avoid wildcard unless the endpoint is intentionally public.",
+			ToolSource:   "custom-cors",
+			Timestamp:    time.Now(),
+		})
+	}
+
+	return findings, nil
+}
+
+var errorPatterns = []struct {
+	pattern *regexp.Regexp
+	label   string
+	severity types.Severity
+}{
+	{regexp.MustCompile(`(?i)(stack\s*trace|traceback\s*\(most recent call last\))`), "Stack Trace", types.SeverityMedium},
+	{regexp.MustCompile(`(?i)(SQL syntax.*MySQL|Warning.*mysql_|PostgreSQL.*ERROR|ORA-\d{5}|Microsoft OLE DB|SQLite.*error|SQLSTATE)`) , "SQL Error", types.SeverityMedium},
+	{regexp.MustCompile(`(?i)(Fatal error|Uncaught exception|Exception in|Parse error|syntax error, unexpected)`) , "Fatal Error", types.SeverityMedium},
+	{regexp.MustCompile(`(?i)(at\s+[\w.<>]+\.[\w<>]+\([\w.]+:\d+\)|File\s+"[^"]+",\s+line\s+\d+)`) , "Source Path in Error", types.SeverityLow},
+	{regexp.MustCompile(`(?i)(DEBUG|Debug mode|debug=true|environment.*development)`) , "Debug Information", types.SeverityLow},
+	{regexp.MustCompile(`(?i)(phpinfo|PHP Version|SERVER\["`), "PHP Info Leak", types.SeverityMedium},
+	{regexp.MustCompile(`(?i)(version.*\d+\.\d+\.\d+|server:\s+apache|server:\s+nginx|server:\s+microsoft-iis|x-powered-by)`) , "Server Version Disclosure", types.SeverityLow},
+}
+
+func checkErrorDisclosure(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	probes := []string{
+		target + "/",
+		target + "/api/",
+		target + "/'",
+		target + "/api/'",
+		target + "/%00",
+		target + "/.php",
+		target + "/admin",
+		target + "/wp-admin",
+		target + "/debug",
+		target + "/api/v1/",
+		target + "/.env",
+		target + "/console",
+	}
+
+	for _, probe := range probes {
+		resp, err := sharedClient.Get(probe)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		bodyStr := string(body)
+		for _, ep := range errorPatterns {
+			if ep.pattern.MatchString(bodyStr) {
+				match := ep.pattern.FindString(bodyStr)
+				findings = append(findings, types.Finding{
+					ID:          fmt.Sprintf("err-disc-%s-%x", ep.label, sha256.Sum256([]byte(probe+match)))[:24],
+					Title:       fmt.Sprintf("Error Disclosure — %s", ep.label),
+					Severity:    ep.severity,
+					AffectedURL: probe,
+					CWE:         []string{"CWE-209"},
+					OWASP2025:   "Security Misconfiguration",
+					CVSS:        4.3,
+					CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+					Description: fmt.Sprintf("%s leaked in response from %s. Error details aid attackers in fingerprinting the technology stack and crafting targeted exploits.", ep.label, probe),
+					AttackScenario: fmt.Sprintf("1. Attacker probes %s\n2. Application leaks %s in response\n3. Attacker identifies framework/stack and crafts targeted exploit", probe, ep.label),
+					Evidence:     fmt.Sprintf("Matched: %s\nIn response from %s:\n%s", match, probe, bodyStr[:min(len(bodyStr), 400)]),
+					Remediation:  "Configure production error handling to return generic error pages. Use custom error handlers that log details server-side only. Set environment to production.",
+					ToolSource:   "custom-error-disc",
+					Timestamp:    time.Now(),
+					Verified:     true,
+				})
+				break
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+var takeoverServices = map[string]string{
+	"cloudfront.net":          "AWS CloudFront",
+	"amazonaws.com":           "AWS S3 Website",
+	"azurewebsites.net":       "Azure Web Apps",
+	"azureedge.net":           "Azure CDN",
+	"herokuapp.com":           "Heroku",
+	"surge.sh":                "Surge.sh",
+	"github.io":               "GitHub Pages",
+	"fastly.net":              "Fastly CDN",
+	"ghost.io":                "Ghost",
+	"shopify.com":             "Shopify",
+	"netlify.app":             "Netlify",
+	"firebaseapp.com":         "Firebase Hosting",
+	"web.app":                 "Google App Engine",
+	"unbouncepages.com":       "Unbounce",
+	"helpscoutdocs.com":       "Help Scout",
+	"bitbucket.io":            "Bitbucket Pages",
+	"readme.io":               "ReadMe",
+	"cargo.site":              "Cargo",
+	"tilda.ws":                "Tilda",
+	"ngrok.io":                "Ngrok",
+}
+
+func checkSubdomainTakeover(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+	hostname := strings.TrimPrefix(strings.TrimPrefix(target, "https://"), "http://")
+	hostname = strings.Split(hostname, "/")[0]
+
+	// Check CNAME of the main target
+	cname, err := net.LookupCNAME(hostname)
+	if err != nil {
+		return findings, nil
+	}
+
+	for pattern, service := range takeoverServices {
+		if strings.Contains(strings.ToLower(cname), pattern) {
+			// Check if the CNAME target resolves
+			cnameHost := strings.TrimSuffix(cname, ".")
+			_, err := net.LookupHost(cnameHost)
+			if err != nil {
+				findings = append(findings, types.Finding{
+					ID:          fmt.Sprintf("sub-takeover-%x", sha256.Sum256([]byte(hostname+cname)))[:24],
+					Title:       fmt.Sprintf("Potential Subdomain Takeover — %s", service),
+					Severity:    types.SeverityHigh,
+					AffectedURL: target,
+					CWE:         []string{"CWE-404"},
+					OWASP2025:   "Security Misconfiguration",
+					CVSS:        7.5,
+					CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+					Description: fmt.Sprintf("The CNAME for %s points to %s (%s) which appears unclaimed or unresolvable. An attacker could register this service and serve content on the targeted domain.", hostname, cname, service),
+					AttackScenario: fmt.Sprintf("1. Subdomain %s CNAMEs to %s (%s)\n2. The service is unclaimed\n3. Attacker registers the dangling service and serves phishing/malware pages on the trusted domain", hostname, cname, service),
+					Evidence:     fmt.Sprintf("CNAME: %s → %s (unresolvable)", hostname, cname),
+					Remediation:  fmt.Sprintf("Remove the dangling DNS record pointing to %s. If the service is no longer in use, delete the CNAME record entirely.", service),
+					ToolSource:   "custom-subdomain-takeover",
+					Timestamp:    time.Now(),
+					Verified:     true,
+				})
+			}
+		}
+	}
+
+	return findings, nil
+}
+
+var exposedEndpointsList = []struct {
+	path     string
+	label    string
+	severity types.Severity
+}{
+	{"/actuator/health", "Spring Boot Actuator — Health", types.SeverityInfo},
+	{"/actuator/env", "Spring Boot Actuator — Environment", types.SeverityHigh},
+	{"/actuator/heapdump", "Spring Boot Actuator — Heap Dump", types.SeverityCritical},
+	{"/actuator/mappings", "Spring Boot Actuator — Mappings", types.SeverityMedium},
+	{"/swagger-ui.html", "Swagger UI", types.SeverityMedium},
+	{"/swagger/index.html", "Swagger Index", types.SeverityMedium},
+	{"/api-docs", "API Documentation", types.SeverityMedium},
+	{"/v2/api-docs", "Swagger v2 API Docs", types.SeverityMedium},
+	{"/v3/api-docs", "OpenAPI v3 Docs", types.SeverityMedium},
+	{"/graphql", "GraphQL Endpoint", types.SeverityMedium},
+	{"/api/graphql", "GraphQL API Endpoint", types.SeverityMedium},
+	{"/wp-admin", "WordPress Admin", types.SeverityMedium},
+	{"/phpmyadmin", "phpMyAdmin", types.SeverityHigh},
+	{"/.env", "Environment File", types.SeverityCritical},
+	{"/.env.backup", "Environment Backup File", types.SeverityCritical},
+	{"/.env.example", "Environment Example File", types.SeverityMedium},
+	{"/admin", "Admin Panel", types.SeverityMedium},
+	{"/administrator", "Joomla Admin", types.SeverityMedium},
+	{"/console", "Symfony Console / Debug", types.SeverityHigh},
+	{"/_debug/", "Debug Toolbar", types.SeverityHigh},
+	{"/config.js", "Config File", types.SeverityMedium},
+	{"/config.json", "Config JSON", types.SeverityMedium},
+	{"/server-status", "Apache Server Status", types.SeverityMedium},
+	{"/server-info", "Apache Server Info", types.SeverityMedium},
+	{"/.DS_Store", "macOS DS_Store File", types.SeverityLow},
+	{"/robots.txt", "Robots.txt", types.SeverityInfo},
+	{"/sitemap.xml", "Sitemap", types.SeverityInfo},
+	{"/wp-json/", "WordPress REST API", types.SeverityInfo},
+	{"/backup", "Backup Directory", types.SeverityMedium},
+	{"/backup.zip", "Backup Archive", types.SeverityHigh},
+	{"/tmp/", "Temporary Files", types.SeverityMedium},
+	{"/uploads/", "Uploads Directory", types.SeverityLow},
+	{"/log/", "Log Directory", types.SeverityMedium},
+	{"/logs/", "Logs Directory", types.SeverityMedium},
+}
+
+func checkExposedEndpoints(target string) ([]types.Finding, error) {
+	var findings []types.Finding
+
+	for _, ep := range exposedEndpointsList {
+		u := strings.TrimRight(target, "/") + ep.path
+		resp, err := sharedClient.Get(u)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == 200 {
+			findings = append(findings, types.Finding{
+				ID:          fmt.Sprintf("exposed-%s-%x", ep.path, sha256.Sum256([]byte(u)))[:24],
+				Title:       fmt.Sprintf("Exposed Endpoint — %s", ep.label),
+				Severity:    ep.severity,
+				AffectedURL: u,
+				CWE:         []string{"CWE-200"},
+				OWASP2025:   "Security Misconfiguration",
+				CVSS: func() float64 {
+					if ep.severity == types.SeverityCritical { return 9.1 }
+					if ep.severity == types.SeverityHigh { return 7.5 }
+					if ep.severity == types.SeverityMedium { return 5.3 }
+					return 0
+				}(),
+				CVSSVector:  "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+				Description: fmt.Sprintf("%s is publicly accessible. This exposes internal configuration, API structure, or administrative interfaces.", u),
+				AttackScenario: fmt.Sprintf("1. Attacker discovers %s\n2. Extracts environment variables, API keys, or database credentials\n3. Uses exposed information for privilege escalation or data exfiltration", u),
+				Evidence:     fmt.Sprintf("GET %s returned HTTP 200", u),
+				Remediation:  "Restrict access to administrative and debug endpoints via IP allowlisting, authentication, or network-level controls. Remove sensitive files from production deployments.",
+				ToolSource:   "custom-exposed-endpoints",
+				Timestamp:    time.Now(),
+				Verified:     true,
+			})
+		}
+	}
+
+	return findings, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func extractJSUrls(html, baseURL string) []string {

@@ -20,10 +20,28 @@ import (
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
 
+func printBanner() {
+	fmt.Println(`
+   ___                        _   ____
+  / _ \   _ __ ___    _ __   (_) / ___|    ___    __ _   _ __
+ | | | | | '_ ` + "`" + ` _ \  | '_ \  | | \___ \   / __|  / _` + "`" + ` | | '_ \
+ | |_| | | | | | | | | | | | | |  ___) | | (__  | (_| | | | | |
+  \___/  |_| |_| |_| |_| |_| |_| |____/   \___|  \__,_| |_| |_|`)
+	fmt.Println()
+	fmt.Println("  Unified Vulnerability Hunting Platform — 13 tools, one interface.")
+	fmt.Println("  ─────────────────────────────────────────────────────────────")
+	fmt.Println("  Developer: EliTechWiz (Eliah Hango)")
+	fmt.Println("  GitHub:    https://github.com/Eliahhango")
+	fmt.Println("  Website:   https://elitechwiz.com")
+	fmt.Println("  Telegram:  @techarmyy")
+	fmt.Println("  ─────────────────────────────────────────────────────────────")
+	fmt.Println()
+}
+
 func main() {
+	printBanner()
+
 	if len(os.Args) < 2 {
-		fmt.Println("OmniScan - Unified Vulnerability Hunting Platform")
-		fmt.Println()
 		fmt.Println("Usage:")
 		fmt.Println("  omniscan tui                      Launch interactive TUI")
 		fmt.Println("  omniscan scan [flags] <target>    Run scan")

@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Eliahhango/OmniScan/internal/db"
@@ -982,7 +981,15 @@ func UpdateSelf() error {
 
 	// Re-exec into the new binary so InstallAll() runs with updated code
 	os.Setenv("OMNISCAN_UPDATED", "1")
-	return syscall.Exec(installPath, os.Args, os.Environ())
+	cmd := exec.Command(installPath, os.Args[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("restart into new binary: %w", err)
+	}
+	os.Exit(0)
+	return nil
 }
 
 // copyFile copies a file from src to dst (simple helper).

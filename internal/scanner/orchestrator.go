@@ -414,6 +414,26 @@ func findToolMulti(names []string, extraPaths ...string) string {
 			}
 		}
 	}
+	// Search common Go binary directories
+	homeDir, _ := os.UserHomeDir()
+	goDirs := []string{
+		filepath.Join(homeDir, "go", "bin"),
+		"/root/go/bin",
+	}
+	if gh := os.Getenv("GOPATH"); gh != "" {
+		goDirs = append(goDirs, filepath.Join(gh, "bin"))
+	}
+	if gh := os.Getenv("GOROOT"); gh != "" {
+		goDirs = append(goDirs, filepath.Join(gh, "bin"))
+	}
+	for _, name := range safe {
+		for _, dir := range goDirs {
+			path := filepath.Join(dir, name)
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
+		}
+	}
 	return safe[0]
 }
 

@@ -15,7 +15,7 @@ import (
 type NmapScanner struct {
 	Target   string
 	ToolsDir string
-	Results  chan<- types.Finding
+	Results  chan types.Finding
 }
 
 func NewNmapScanner(target string, toolsDir string) *NmapScanner {
@@ -26,6 +26,9 @@ func NewNmapScanner(target string, toolsDir string) *NmapScanner {
 }
 
 func (n *NmapScanner) Run(ctx context.Context) error {
+	if n.Results != nil {
+		defer close(n.Results)
+	}
 	outputFile := filepath.Join(os.TempDir(), fmt.Sprintf("nmap-%d.xml", time.Now().UnixMilli()))
 	defer os.Remove(outputFile)
 

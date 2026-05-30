@@ -19,6 +19,11 @@ func NewOpenVAS(target string, toolsDir string) *OpenVAS {
 }
 
 func (o *OpenVAS) Run(ctx context.Context) error {
+	defer func() {
+		if o.Results != nil {
+			close(o.Results)
+		}
+	}()
 	if o.Results != nil {
 		o.Results <- types.Finding{
 			ID:          "openvas-skip",

@@ -47,28 +47,28 @@ func (g *Generator) GenerateAll(target string, findings []types.Finding, duratio
 		return err
 	}
 
-	data := g.buildReportData(target, findings, duration, tools)
+	data := g.BuildReportData(target, findings, duration, tools)
 
-	if err := g.GenerateHTML(data); err != nil {
+	if _, err := g.GenerateHTML(data); err != nil {
 		return fmt.Errorf("html: %w", err)
 	}
-	if err := g.GenerateJSON(data); err != nil {
+	if _, err := g.GenerateJSON(data); err != nil {
 		return fmt.Errorf("json: %w", err)
 	}
-	if err := g.GenerateMarkdown(data); err != nil {
+	if _, err := g.GenerateMarkdown(data); err != nil {
 		return fmt.Errorf("markdown: %w", err)
 	}
-	if err := g.GenerateCSV(data); err != nil {
+	if _, err := g.GenerateCSV(data); err != nil {
 		return fmt.Errorf("csv: %w", err)
 	}
-	if err := g.GeneratePDF(data); err != nil {
+	if _, err := g.GeneratePDF(data); err != nil {
 		return fmt.Errorf("pdf: %w", err)
 	}
 
 	return nil
 }
 
-func (g *Generator) buildReportData(target string, findings []types.Finding, duration time.Duration, tools []string) ReportData {
+func (g *Generator) BuildReportData(target string, findings []types.Finding, duration time.Duration, tools []string) ReportData {
 	data := ReportData{
 		Target:      target,
 		ScanDate:    time.Now().Format("2006-01-02 15:04:05"),
@@ -129,7 +129,7 @@ func (g *Generator) buildReportData(target string, findings []types.Finding, dur
 	return data
 }
 
-func (g *Generator) GenerateHTML(data ReportData) error {
+func (g *Generator) GenerateHTML(data ReportData) (string, error) {
 	funcMap := template.FuncMap{
 		"percent": func(count, total int) string {
 			if total == 0 {
@@ -156,29 +156,29 @@ func (g *Generator) GenerateHTML(data ReportData) error {
 	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.html", time.Now().Format("20060102-150405")))
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
-	return tmpl.Execute(f, data)
+	return path, tmpl.Execute(f, data)
 }
 
-func (g *Generator) GenerateJSON(data ReportData) error {
+func (g *Generator) GenerateJSON(data ReportData) (string, error) {
 	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.json", time.Now().Format("20060102-150405")))
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 	encoder := json.NewEncoder(f)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(data)
+	return path, encoder.Encode(data)
 }
 
-func (g *Generator) GenerateMarkdown(data ReportData) error {
+func (g *Generator) GenerateMarkdown(data ReportData) (string, error) {
 	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.md", time.Now().Format("20060102-150405")))
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 
@@ -209,10 +209,10 @@ func (g *Generator) GenerateMarkdown(data ReportData) error {
 		fmt.Fprintf(f, "\n")
 	}
 
-	return nil
+	return path, nil
 }
 
-func (g *Generator) GeneratePDF(data ReportData) error {
+func (g *Generator) GeneratePDF(data ReportData) (string, error) {
 	funcMap := template.FuncMap{
 		"percent": func(count, total int) string {
 			if total == 0 {
@@ -239,24 +239,24 @@ func (g *Generator) GeneratePDF(data ReportData) error {
 	tmpl := template.Must(template.New("report").Funcs(funcMap).Parse(htmlTemplate))
 	f, err := os.Create(htmlPath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 	if err := tmpl.Execute(f, data); err != nil {
-		return err
+		return "", err
 	}
 	f.Close()
 
 	pdfGen := NewPDFGenerator(g.OutputDir)
-	_, _, err = pdfGen.Generate(htmlPath)
-	return err
+	pdfPath, _, err := pdfGen.Generate(htmlPath)
+	return pdfPath, err
 }
 
-func (g *Generator) GenerateCSV(data ReportData) error {
+func (g *Generator) GenerateCSV(data ReportData) (string, error) {
 	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.csv", time.Now().Format("20060102-150405")))
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 
@@ -281,5 +281,5 @@ func (g *Generator) GenerateCSV(data ReportData) error {
 			finding.Remediation,
 		})
 	}
-	return nil
+	return path, nil
 }

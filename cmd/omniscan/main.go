@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/Eliahhango/OmniScan/internal/config"
 	"github.com/Eliahhango/OmniScan/internal/daemon"
 	"github.com/Eliahhango/OmniScan/internal/db"
+	"github.com/Eliahhango/OmniScan/internal/report"
 	"github.com/Eliahhango/OmniScan/internal/scanner"
 	"github.com/Eliahhango/OmniScan/internal/tui"
 	"github.com/Eliahhango/OmniScan/pkg/types"
@@ -196,15 +199,22 @@ func runScan(configPath string) {
 	}
 	start := time.Now()
 
-	var highestSeverity types.Severity
+	var allFindings []types.Finding
 	var mu sync.Mutex
+	toolSet := make(map[string]bool)
+	var highestSeverity types.Severity
+	var readWg sync.WaitGroup
 
+	readWg.Add(1)
 	go func() {
+		defer readWg.Done()
 		for finding := range orch.Results() {
 			mu.Lock()
+			allFindings = append(allFindings, finding)
 			if severityRank[finding.Severity] > severityRank[highestSeverity] {
 				highestSeverity = finding.Severity
 			}
+			toolSet[finding.ToolSource] = true
 			mu.Unlock()
 
 			if jsonOutput {
@@ -216,7 +226,9 @@ func runScan(configPath string) {
 		}
 	}()
 
+	readWg.Add(1)
 	go func() {
+		defer readWg.Done()
 		for err := range orch.Errors() {
 			if jsonOutput {
 				line, _ := json.Marshal(map[string]string{"error": err.Error()})
@@ -237,14 +249,103 @@ func runScan(configPath string) {
 		os.Exit(1)
 	}
 
+	readWg.Wait()
+
 	duration := time.Since(start)
 	if !jsonOutput {
 		fmt.Printf("\nScan completed in %s\n", duration)
+		fmt.Printf("Total findings: %d\n", len(allFindings))
 	}
 
 	if exitOnSeverity != "" && severityRank[highestSeverity] >= severityRank[exitOnSeverity] {
 		os.Exit(1)
 	}
+
+	// Generate report
+	if jsonOutput {
+		return
+	}
+	generateScanReport(target, allFindings, duration, toolSet, cfg.OutputDir)
+}
+
+func generateScanReport(target string, findings []types.Finding, duration time.Duration, toolSet map[string]bool, outputDir string) {
+	fmt.Println()
+	fmt.Println("================================================")
+	fmt.Println("  SCAN COMPLETE — Generate Report")
+	fmt.Println("================================================")
+	fmt.Println("  Available formats: html, pdf, markdown, json, csv, all")
+	fmt.Println("  Enter nothing to skip.")
+	fmt.Print("  Report format [html]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	format, _ := reader.ReadString('\n')
+	format = strings.TrimSpace(format)
+	if format == "" {
+		format = "html"
+	}
+
+	if format == "all" || format == "skip" {
+		if format == "skip" {
+			fmt.Println("  Skipping report generation.")
+			return
+		}
+	}
+
+	reporter := report.NewGenerator(outputDir)
+	tools := make([]string, 0, len(toolSet))
+	for t := range toolSet {
+		tools = append(tools, t)
+	}
+	data := reporter.BuildReportData(target, findings, duration, tools)
+
+	var filePath string
+	var genErr error
+
+	switch strings.ToLower(format) {
+	case "html":
+		filePath, genErr = reporter.GenerateHTML(data)
+	case "pdf":
+		filePath, genErr = reporter.GeneratePDF(data)
+	case "markdown", "md":
+		filePath, genErr = reporter.GenerateMarkdown(data)
+	case "json":
+		filePath, genErr = reporter.GenerateJSON(data)
+	case "csv":
+		filePath, genErr = reporter.GenerateCSV(data)
+	case "all":
+		paths := make([]string, 0, 5)
+		formats := []struct {
+			name string
+			fn   func(report.ReportData) (string, error)
+		}{
+			{"html", reporter.GenerateHTML},
+			{"markdown", reporter.GenerateMarkdown},
+			{"json", reporter.GenerateJSON},
+			{"csv", reporter.GenerateCSV},
+			{"pdf", reporter.GeneratePDF},
+		}
+		for _, f := range formats {
+			if p, err := f.fn(data); err == nil {
+				paths = append(paths, p)
+			} else {
+				fmt.Printf("  [!] %s: %v\n", f.name, err)
+			}
+		}
+		fmt.Println("\n  Reports generated:")
+		for _, p := range paths {
+			fmt.Printf("    • %s\n", p)
+		}
+		return
+	default:
+		fmt.Printf("  Unknown format: %s. Generating HTML instead.\n", format)
+		filePath, genErr = reporter.GenerateHTML(data)
+	}
+
+	if genErr != nil {
+		fmt.Printf("  [!] Error generating %s report: %v\n", format, genErr)
+		return
+	}
+	fmt.Printf("\n  Report saved to: %s\n", filePath)
 }
 
 var severityRank = map[types.Severity]int{

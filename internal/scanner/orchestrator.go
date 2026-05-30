@@ -768,14 +768,21 @@ func (i *Installer) installZap() error {
 func (i *Installer) installSemgrep() error {
 	switch runtime.GOOS {
 	case "linux":
-		// Try package managers to bootstrap pip
+		// Step 1: try to install python3 itself via any available package manager
+		_, _ = runCmd(context.Background(), "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "dnf install -y python3 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "yum install -y python3 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "apk add python3 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "pacman -S --noconfirm python 2>/dev/null")
+		// Step 2: bootstrap pip via ensurepip or package manager
+		_, _ = runCmd(context.Background(), "sh", "-c", "python3 -m ensurepip --upgrade 2>/dev/null")
 		_, _ = runCmd(context.Background(), "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-pip python3-venv 2>/dev/null")
 		_, _ = runCmd(context.Background(), "sh", "-c", "dnf install -y python3-pip 2>/dev/null")
 		_, _ = runCmd(context.Background(), "sh", "-c", "yum install -y python3-pip 2>/dev/null")
 		_, _ = runCmd(context.Background(), "sh", "-c", "apk add py3-pip 2>/dev/null")
 		_, _ = runCmd(context.Background(), "sh", "-c", "pacman -S --noconfirm python-pip 2>/dev/null")
-		// Try ensurepip if python3 exists but pip doesn't
-		_, _ = runCmd(context.Background(), "sh", "-c", "python3 -m ensurepip --upgrade 2>/dev/null")
+		// Step 3: if pip still missing, try bootstrap.pypa.io
+		_, _ = runCmd(context.Background(), "sh", "-c", "curl -sL https://bootstrap.pypa.io/get-pip.py | python3 2>/dev/null")
 		cmds := []string{
 			"pip3 install semgrep",
 			"pip install semgrep",
@@ -901,9 +908,21 @@ func (i *Installer) installTrufflehog() error {
 }
 
 // UpdateSelf rebuilds OmniScan from source via go install
+// Uses GOPROXY=direct to bypass Go module proxy cache and always fetch
+// the absolute latest commit from GitHub.
 func UpdateSelf() error {
-	_, err := runCmd(context.Background(), "go", "install", "github.com/Eliahhango/OmniScan/cmd/omniscan@latest")
-	return err
+	ctx := context.Background()
+	cmd := exec.CommandContext(ctx, "go", "install", "github.com/Eliahhango/OmniScan/cmd/omniscan@latest")
+	cmd.Env = append(os.Environ(), "GOPROXY=direct")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(output))
+		if msg != "" {
+			return fmt.Errorf("go install: %s", msg)
+		}
+		return fmt.Errorf("go install: %w", err)
+	}
+	return nil
 }
 
 // UpdateAll updates the binary and all integrated tools

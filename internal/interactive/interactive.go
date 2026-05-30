@@ -17,10 +17,11 @@ import (
 )
 
 type ScanCategory struct {
-	Number  string
-	Name    string
-	Desc    string
-	Scanners []string // names of CustomChecks + external tools
+	Number    string
+	Name      string
+	Desc      string
+	Scanners  []string         // names of CustomChecks
+	Stages    []types.ScanStage // orchestrator stages to run (empty = custom scanners only)
 }
 
 var scanCategories = []ScanCategory{
@@ -56,23 +57,26 @@ var scanCategories = []ScanCategory{
 	},
 	{
 		Number: "6", Name: "Port Scanning",
-		Desc:    "Quick TCP port scan on common ports",
+		Desc:    "Nmap port scan, custom TCP port scan",
 		Scanners: []string{"port-scan"},
+		Stages:   []types.ScanStage{types.StageDeepScan},
 	},
 	{
 		Number: "7", Name: "Secrets & SAST",
-		Desc:    "JS secrets, error disclosure, IDOR detection, race condition",
+		Desc:    "TruffleHog, Semgrep, JS secrets, error disclosure, IDOR",
 		Scanners: []string{"js-secrets", "error-disclosure", "idor-detection", "race-condition"},
+		Stages:   []types.ScanStage{types.StageSAST, types.StageSecrets},
 	},
 	{
 		Number: "8", Name: "Fuzzing & Bruteforce",
-		Desc:    "Rate limiting tests, parameter discovery",
+		Desc:    "FFUF, GoBuster, rate limiting tests",
 		Scanners: []string{"rate-limiting"},
+		Stages:   []types.ScanStage{types.StageFuzzing},
 	},
 	{
-		Number: "9", Name: "External Scanners (full scan only)",
-		Desc:    "Nuclei, ZAP, Nikto, OpenVAS — run via [A] Scan Everything",
-		Scanners: []string{},
+		Number: "9", Name: "External Scanners",
+		Desc:    "Nuclei, ZAP, Nikto, OpenVAS",
+		Stages:   []types.ScanStage{types.StageVulnScan, types.StageDeepScan},
 	},
 	{
 		Number: "10", Name: "CMS & Technology Detection",
@@ -191,11 +195,9 @@ func printScanList(target, protocol string) {
 	}
 
 	fmt.Println("  [12] Custom — Pick individual scanners by number")
-	fmt.Println("  [A]  Scan Everything — Full comprehensive scan (includes external tools)")
+	fmt.Println("  [A]  Scan Everything — Full comprehensive scan")
 	fmt.Println("  [B]  Back — Enter a new target")
 	fmt.Println("  [Q]  Quit")
-	fmt.Println("  ────────────────────────────────────────────────────────────────────────────")
-	fmt.Println("  Note: External tools (Nuclei, Nmap, ZAP, Nikto, etc.) only run via [A].")
 }
 
 func findCategory(num string) *ScanCategory {
@@ -229,22 +231,76 @@ func runCategory(cfg *config.Config, target, protocol string, cat *ScanCategory,
 	fmt.Printf("\n  Running %s on %s%s\n", cat.Name, protocol, target)
 	fmt.Println()
 
+	// Run custom scanners in this category
 	selected := make(map[string]bool)
 	for _, name := range cat.Scanners {
 		selected[name] = true
 	}
-
 	findings := runCustomScanners(target, selected)
+
+	// Run orchestrator stages if the category requires external tools
+	if len(cat.Stages) > 0 {
+		store, err := db.New(cfg.DBPath, cfg.Passphrase)
+		if err == nil {
+			defer store.Close()
+			orchFindings := runOrchestratorStages(cfg, store, target, cat.Stages, reader)
+			findings = append(findings, orchFindings...)
+		}
+	}
+
 	if len(findings) > 0 {
 		generateReport(findings, target, cfg.OutputDir, reader)
 	} else {
-		fmt.Println("  No findings from selected scanners.")
+		fmt.Println("  No findings.")
 	}
 }
 
 type scanConfig struct {
 	name   string
 	runFn  func(context.Context, *scanner.Orchestrator, string, int64) error
+}
+
+func runOrchestratorStages(cfg *config.Config, store *db.Store, target string, stages []types.ScanStage, reader *bufio.Reader) []types.Finding {
+	orchCfg := &scanner.OrchestratorConfig{
+		Target:      target,
+		Concurrency: cfg.Concurrency,
+		RateLimit:   cfg.RateLimit,
+		OutputDir:   cfg.OutputDir,
+		ToolsDir:    cfg.ToolsDir,
+		DBPath:      cfg.DBPath,
+	}
+	orch := scanner.NewOrchestrator(orchCfg, store)
+
+	orch.OnStage = func(stage types.ScanStage, tool string, progress float64) {
+		if tool != "" {
+			fmt.Printf("  [%s] %s\n", types.StageNames[stage], tool)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	var allFindings []types.Finding
+	var mu sync.Mutex
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for finding := range orch.Results() {
+			mu.Lock()
+			allFindings = append(allFindings, finding)
+			mu.Unlock()
+			fmt.Printf("  [%s] %s - %s (%s)\n", finding.Severity, finding.Title, finding.AffectedURL, finding.ToolSource)
+		}
+	}()
+
+	if err := orch.Run(ctx, stages...); err != nil {
+		fmt.Fprintf(os.Stderr, "  Scan error: %v\n", err)
+	}
+	wg.Wait()
+
+	return allFindings
 }
 
 func runOrchestrator(cfg *config.Config, store *db.Store, target string, reader *bufio.Reader) []types.Finding {

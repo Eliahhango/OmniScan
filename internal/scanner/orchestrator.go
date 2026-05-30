@@ -50,6 +50,7 @@ type OrchestratorConfig struct {
 	ToolsDir    string
 	Resume      bool
 	DBPath      string
+	Stages      []types.ScanStage // if set, only run these stages; empty = all
 }
 
 func NewOrchestrator(cfg *OrchestratorConfig, db *db.Store) *Orchestrator {
@@ -81,7 +82,7 @@ func (o *Orchestrator) Errors() <-chan error {
 	return o.errors
 }
 
-func (o *Orchestrator) Run(ctx context.Context) error {
+func (o *Orchestrator) Run(ctx context.Context, allowedStages ...types.ScanStage) error {
 	scanID, err := o.db.CreateScan(o.cfg.Target, o.cfg.Scope)
 	if err != nil {
 		return fmt.Errorf("create scan: %w", err)
@@ -109,8 +110,16 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		{types.StageSecrets, "Secrets", o.runSecrets},
 	}
 
+	stageFilter := make(map[types.ScanStage]bool)
+	for _, as := range allowedStages {
+		stageFilter[as] = true
+	}
+
 	for i, s := range stages {
 		if int(s.stage) <= resumeStage {
+			continue
+		}
+		if len(stageFilter) > 0 && !stageFilter[s.stage] {
 			continue
 		}
 		select {

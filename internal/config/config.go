@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/Eliahhango/OmniScan/pkg/types"
 	"gopkg.in/yaml.v3"
@@ -54,11 +55,13 @@ func Load(path string) (*Config, error) {
 }
 
 func Defaults() *Config {
+	homeDir, _ := os.UserHomeDir()
+	omniscanDir := filepath.Join(homeDir, "OmniScan")
 	return &Config{
-		DBPath:      "omniscan.db",
-		OutputDir:   "reports",
-		TemplateDir: "templates",
-		ToolsDir:    "tools",
+		DBPath:      filepath.Join(omniscanDir, "omniscan.db"),
+		OutputDir:   filepath.Join(omniscanDir, "reports"),
+		TemplateDir: filepath.Join(omniscanDir, "templates"),
+		ToolsDir:    filepath.Join(omniscanDir, "tools"),
 		Concurrency: 5,
 		RateLimit:   150,
 		Webhook:     WebhookConfig{MinSeverity: types.SeverityCritical},

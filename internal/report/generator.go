@@ -76,6 +76,9 @@ func (g *Generator) GenerateAll(target string, findings []types.Finding, duratio
 	if _, err := g.GeneratePDF(data); err != nil {
 		return fmt.Errorf("pdf: %w", err)
 	}
+	if _, err := g.GenerateTXT(data); err != nil {
+		return fmt.Errorf("txt: %w", err)
+	}
 
 	return nil
 }
@@ -544,6 +547,183 @@ func (g *Generator) GeneratePDF(data ReportData) (string, error) {
 	pdfGen := NewPDFGenerator(g.OutputDir)
 	pdfPath, _, err := pdfGen.Generate(htmlPath)
 	return pdfPath, err
+}
+
+func (g *Generator) GenerateTXT(data ReportData) (string, error) {
+	if err := os.MkdirAll(g.OutputDir, 0755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.txt", time.Now().Format("20060102-150405")))
+	f, err := os.Create(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	w := func(format string, a ...interface{}) {
+		fmt.Fprintf(f, format, a...)
+	}
+
+	sw := func(s string) {
+		w("%s\n", s)
+	}
+	sep := func() { sw(strings.Repeat("=", 72)) }
+	dash := func() { sw(strings.Repeat("-", 72)) }
+
+	sep()
+	w("  VULNERABILITY ASSESSMENT REPORT\n")
+	sep()
+	w("  Target:    %s\n", data.Target)
+	w("  Date:      %s\n", data.ScanDate)
+	w("  Duration:  %s\n", data.Duration)
+	w("  Tools:     %d engines\n", len(data.ToolsUsed))
+	w("  Version:   OmniScan %s\n", data.Version)
+	sep()
+	sw("")
+
+	// Executive Summary
+	sw("1. EXECUTIVE SUMMARY")
+	dash()
+	sw(data.ExecutiveSummary)
+	sw("")
+	if data.TotalVulns > 0 {
+		w("  Risk Posture:           %s\n", data.RiskLabel)
+		w("  Total Findings:         %d\n", data.TotalVulns)
+		w("  Average CVSS Score:     %.1f\n", data.CVSSAvg)
+		w("  CWE Categories:         %d\n", data.CWECount)
+		w("  OWASP Top 10 Coverage:  %d/10\n", data.OWASPCoverage)
+		sw("")
+	}
+
+	// Scope & Methodology
+	sw("2. SCOPE & METHODOLOGY")
+	dash()
+	sw("  Scope:")
+	sw("  " + data.Scope)
+	sw("")
+	sw("  Methodology:")
+	sw("  " + data.Methodology)
+	sw("")
+	w("  Tools Used: %s\n", strings.Join(data.ToolsUsed, ", "))
+	sw("")
+
+	// Severity Distribution
+	sw("3. FINDINGS SUMMARY")
+	dash()
+	sw("  3.1 Severity Distribution")
+	sw("")
+	w("  %-12s %s\n", "Severity", "Count")
+	w("  %-12s %s\n", "--------", "-----")
+	w("  %-12s %3d\n", "Critical", data.SeverityBreakdown.Critical)
+	w("  %-12s %3d\n", "High", data.SeverityBreakdown.High)
+	w("  %-12s %3d\n", "Medium", data.SeverityBreakdown.Medium)
+	w("  %-12s %3d\n", "Low", data.SeverityBreakdown.Low)
+	w("  %-12s %3d\n", "Info", data.SeverityBreakdown.Info)
+	w("  %-12s %3d\n", "Total", data.TotalVulns)
+	sw("")
+
+	if len(data.TopCritical) > 0 {
+		sw("  3.2 Top Critical & High Findings")
+		sw("")
+		for i, f := range data.TopCritical {
+			cve := f.CVE
+			if cve == "" {
+				cve = "-"
+			}
+			w("  %d. [%s] %s (CVE: %s)\n", i+1, f.Severity, f.Title, cve)
+			w("      URL: %s\n", f.AffectedURL)
+		}
+		sw("")
+	}
+
+	// Strengths
+	sw("4. OBSERVED STRENGTHS")
+	dash()
+	if len(data.ObservedStrengths) == 0 {
+		sw("  No specific strengths identified.")
+	} else {
+		for i, s := range data.ObservedStrengths {
+			w("  %d. %s\n", i+1, s)
+		}
+	}
+	sw("")
+
+	// Detailed Findings
+	sw("5. DETAILED FINDINGS")
+	dash()
+	if len(data.Findings) == 0 {
+		sw("  No vulnerabilities were identified.")
+		sw("")
+	} else {
+		for i, f := range data.Findings {
+			w("  5.%d Finding: [%s] %s\n", i+1, f.Severity, f.Title)
+			dash()
+			if f.Description != "" {
+				sw("  " + f.Description)
+				sw("")
+			}
+			w("    Severity:     %s\n", f.Severity)
+			w("    Tool:         %s\n", f.ToolSource)
+			if f.AffectedURL != "" {
+				w("    URL:          %s\n", f.AffectedURL)
+			}
+			if f.AffectedParam != "" {
+				w("    Parameter:    %s\n", f.AffectedParam)
+			}
+			if f.CVE != "" {
+				w("    CVE:          %s\n", f.CVE)
+			}
+			if len(f.CWE) > 0 {
+				w("    CWE:          %s\n", strings.Join(f.CWE, ", "))
+			}
+			if f.OWASP2025 != "" {
+				w("    OWASP:        %s\n", f.OWASP2025)
+			}
+			if f.CVSS > 0 {
+				w("    CVSS:         %.1f\n", f.CVSS)
+			}
+			if f.EPSS > 0 {
+				w("    EPSS:         %.4f\n", f.EPSS)
+			}
+			if f.Proof != "" {
+				w("    Proof:        %s\n", f.Proof)
+			}
+			if f.Remediation != "" {
+				w("    Remediation:  %s\n", f.Remediation)
+			}
+			sw("")
+		}
+	}
+
+	// Recommendations
+	sw("6. STRATEGIC RECOMMENDATIONS")
+	dash()
+	if len(data.StrategicRecommendations) == 0 {
+		sw("  No specific recommendations at this time.")
+	} else {
+		for i, r := range data.StrategicRecommendations {
+			w("  %d. %s\n", i+1, r)
+		}
+	}
+	sw("")
+
+	// Severity Reference
+	sw("APPENDIX A: SEVERITY REFERENCE")
+	dash()
+	sw("  Critical  9.0-10.0  Exploitation is trivial; complete compromise")
+	sw("  High      7.0-8.9   Significant impact; exploitation likely")
+	sw("  Medium    4.0-6.9   Notable risk; specific conditions needed")
+	sw("  Low       0.1-3.9   Limited impact; special circumstances")
+	sw("  Info      0.0       Informational only")
+	sw("")
+	sep()
+
+	sw("")
+	w("Report generated by OmniScan %s\n", data.Version)
+	w("Assessment conducted on %s\n", data.ScanDate)
+	w("https://github.com/Eliahhango/OmniScan\n")
+
+	return path, nil
 }
 
 func (g *Generator) GenerateCSV(data ReportData) (string, error) {

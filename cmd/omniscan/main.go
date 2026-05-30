@@ -318,7 +318,7 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 	fmt.Println("================================================")
 	fmt.Println("  SCAN COMPLETE — Generate Report")
 	fmt.Println("================================================")
-	fmt.Println("  Available formats: html, pdf, markdown, json, csv, all")
+	fmt.Println("  Available formats: html, pdf, markdown, json, csv, txt, all")
 	fmt.Println("  Enter nothing to skip.")
 	fmt.Print("  Report format [html]: ")
 
@@ -329,11 +329,10 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 		format = "html"
 	}
 
-	if format == "all" || format == "skip" {
-		if format == "skip" {
-			fmt.Println("  Skipping report generation.")
-			return
-		}
+	if format == "skip" {
+		fmt.Println("  Skipping report generation.")
+		waitForExit()
+		return
 	}
 
 	reporter := report.NewGenerator(outputDir)
@@ -343,22 +342,32 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 	}
 	data := reporter.BuildReportData(target, findings, duration, tools)
 
+	txtPath := ""
+
 	var filePath string
 	var genErr error
 
 	switch strings.ToLower(format) {
 	case "html":
 		filePath, genErr = reporter.GenerateHTML(data)
+		txtPath, _ = reporter.GenerateTXT(data)
 	case "pdf":
 		filePath, genErr = reporter.GeneratePDF(data)
+		txtPath, _ = reporter.GenerateTXT(data)
 	case "markdown", "md":
 		filePath, genErr = reporter.GenerateMarkdown(data)
+		txtPath, _ = reporter.GenerateTXT(data)
 	case "json":
 		filePath, genErr = reporter.GenerateJSON(data)
+		txtPath, _ = reporter.GenerateTXT(data)
 	case "csv":
 		filePath, genErr = reporter.GenerateCSV(data)
+		txtPath, _ = reporter.GenerateTXT(data)
+	case "txt":
+		filePath, genErr = reporter.GenerateTXT(data)
+		txtPath = filePath
 	case "all":
-		paths := make([]string, 0, 5)
+		paths := make([]string, 0, 6)
 		formats := []struct {
 			name string
 			fn   func(report.ReportData) (string, error)
@@ -368,10 +377,14 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 			{"json", reporter.GenerateJSON},
 			{"csv", reporter.GenerateCSV},
 			{"pdf", reporter.GeneratePDF},
+			{"txt", reporter.GenerateTXT},
 		}
 		for _, f := range formats {
 			if p, err := f.fn(data); err == nil {
 				paths = append(paths, p)
+				if f.name == "txt" {
+					txtPath = p
+				}
 			} else {
 				fmt.Printf("  [!] %s: %v\n", f.name, err)
 			}
@@ -380,17 +393,51 @@ func generateScanReport(target string, findings []types.Finding, duration time.D
 		for _, p := range paths {
 			fmt.Printf("    • %s\n", p)
 		}
+		if txtPath != "" {
+			viewReport(txtPath, reader)
+		}
+		waitForExit()
 		return
 	default:
 		fmt.Printf("  Unknown format: %s. Generating HTML instead.\n", format)
 		filePath, genErr = reporter.GenerateHTML(data)
+		txtPath, _ = reporter.GenerateTXT(data)
 	}
 
 	if genErr != nil {
 		fmt.Printf("  [!] Error generating %s report: %v\n", format, genErr)
+		waitForExit()
 		return
 	}
 	fmt.Printf("\n  Report saved to: %s\n", filePath)
+
+	if format != "txt" && txtPath != "" {
+		filePath = txtPath
+	}
+	viewReport(filePath, reader)
+	waitForExit()
+}
+
+func viewReport(path string, reader *bufio.Reader) {
+	fmt.Print("\n  Would you like to view the report? (y/N): ")
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer != "y" && answer != "yes" {
+		return
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Printf("  [!] Could not read report: %v\n", err)
+		return
+	}
+	fmt.Println()
+	fmt.Println(string(data))
+}
+
+func waitForExit() {
+	fmt.Print("\n  Press Enter to exit...")
+	bufio.NewReader(os.Stdin).ReadString('\n')
 }
 
 var severityRank = map[types.Severity]int{

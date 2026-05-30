@@ -417,6 +417,24 @@ func runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return output, nil
 }
 
+func downloadFile(url, dest string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed: %s (status %d)", url, resp.StatusCode)
+	}
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(f, resp.Body)
+	return err
+}
+
 func findTool(name string, extraPaths ...string) string {
 	return findToolMulti([]string{name}, extraPaths...)
 }
@@ -575,31 +593,195 @@ func (i *Installer) installFfuf() error {
 }
 
 func (i *Installer) installNmap() error {
-	return fmt.Errorf("nmap must be installed via package manager")
+	switch runtime.GOOS {
+	case "linux":
+		// Try apt-get first, then yum, then apk
+		cmds := []string{
+			"apt-get install -y nmap",
+			"yum install -y nmap",
+			"apk add nmap",
+		}
+		var err error
+		for _, c := range cmds {
+			_, err = runCmd(context.Background(), "sh", "-c", c+" 2>/dev/null")
+			if err == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("nmap install failed: %w. Try: apt-get install nmap", err)
+	case "darwin":
+		_, err := runCmd(context.Background(), "brew", "install", "nmap")
+		return err
+	case "windows":
+		return fmt.Errorf("nmap must be installed manually on Windows: https://nmap.org/download.html")
+	}
+	return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 }
 
 func (i *Installer) installNikto() error {
-	return fmt.Errorf("nikto must be installed via package manager")
+	installDir := filepath.Join(i.ToolsDir, "nikto")
+	if _, err := os.Stat(installDir); err == nil {
+		return nil // already installed
+	}
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		// Clone nikto from GitHub
+		if err := os.MkdirAll(i.ToolsDir, 0755); err != nil {
+			return err
+		}
+		_, err := runCmd(context.Background(), "git", "clone", "--depth", "1", "https://github.com/sullo/nikto.git", installDir)
+		if err != nil {
+			// Fallback: download and extract zip
+			_ = os.RemoveAll(installDir)
+			tmpZip := filepath.Join(os.TempDir(), "nikto.zip")
+			defer os.Remove(tmpZip)
+			if err := downloadFile("https://github.com/sullo/nikto/archive/refs/heads/master.zip", tmpZip); err != nil {
+				return fmt.Errorf("nikto download failed: %w. Try: git clone https://github.com/sullo/nikto.git", err)
+			}
+			if _, err := runCmd(context.Background(), "unzip", "-o", tmpZip, "-d", i.ToolsDir); err != nil {
+				return fmt.Errorf("nikto extract failed: %w", err)
+			}
+			if err := os.Rename(filepath.Join(i.ToolsDir, "nikto-master"), installDir); err != nil {
+				return err
+			}
+		}
+		// Make nikto.pl executable and create a symlink wrapper
+		niktoPL := filepath.Join(installDir, "program", "nikto.pl")
+		if err := os.Chmod(niktoPL, 0755); err != nil {
+			return err
+		}
+		// Create wrapper script in ToolsDir
+		wrapper := filepath.Join(i.ToolsDir, "nikto")
+		wrapperContent := "#!/bin/sh\nperl \"" + niktoPL + "\" \"$@\"\n"
+		if err := os.WriteFile(wrapper, []byte(wrapperContent), 0755); err != nil {
+			return err
+		}
+		return nil
+	case "windows":
+		return fmt.Errorf("nikto on Windows requires Perl. Install manually: https://github.com/sullo/nikto")
+	}
+	return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 }
 
 func (i *Installer) installOpenVAS() error {
-	return fmt.Errorf("openvas must be installed via package manager")
+	switch runtime.GOOS {
+	case "linux":
+		// Try apt-get; also try docker-based gvm
+		cmds := []string{
+			"apt-get install -y openvas",
+			"apt-get install -y gvm",
+		}
+		var err error
+		for _, c := range cmds {
+			_, err = runCmd(context.Background(), "sh", "-c", c+" 2>/dev/null")
+			if err == nil {
+				return nil
+			}
+		}
+		// Try Docker-based approach
+		_, err = runCmd(context.Background(), "docker", "pull", "greenbone/gvm")
+		if err == nil {
+			return nil
+		}
+		return fmt.Errorf("openvas install failed. Try: apt-get install openvas or docker pull greenbone/gvm")
+	case "darwin":
+		return fmt.Errorf("openvas on macOS: use Docker: docker pull greenbone/gvm")
+	case "windows":
+		return fmt.Errorf("openvas on Windows: use Docker: docker pull greenbone/gvm")
+	}
+	return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 }
 
 func (i *Installer) installZap() error {
-	return fmt.Errorf("zap must be installed via package manager or docker")
+	zapPath := filepath.Join(i.ToolsDir, "zap")
+	if _, err := os.Stat(zapPath); err == nil {
+		return nil
+	}
+	_ = os.MkdirAll(i.ToolsDir, 0755)
+
+	switch runtime.GOOS {
+	case "linux":
+		// Download latest ZAP Linux package from GitHub releases
+		resp, err := http.Get("https://api.github.com/repos/zaproxy/zaproxy/releases/latest")
+		if err != nil {
+			return fmt.Errorf("fetch ZAP release: %w", err)
+		}
+		defer resp.Body.Close()
+
+		var release struct {
+			TagName string `json:"tag_name"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+			return fmt.Errorf("decode ZAP release: %w", err)
+		}
+		_ = resp.Body.Close()
+
+		// Download Linux tarball: ZAP_2.17.0_Linux.tar.gz
+		// The URL format is: https://github.com/zaproxy/zaproxy/releases/download/TAG/ZAP_VERSION_Linux.tar.gz
+		version := strings.TrimPrefix(release.TagName, "v")
+		url := fmt.Sprintf("https://github.com/zaproxy/zaproxy/releases/download/%s/ZAP_%s_Linux.tar.gz", release.TagName, version)
+		tmpTar := filepath.Join(os.TempDir(), "zap.tar.gz")
+		defer os.Remove(tmpTar)
+
+		if err := downloadFile(url, tmpTar); err != nil {
+			return fmt.Errorf("download ZAP failed: %w. Try manual install: https://www.zaproxy.org/download/", err)
+		}
+		if _, err := runCmd(context.Background(), "tar", "xzf", tmpTar, "-C", i.ToolsDir); err != nil {
+			return fmt.Errorf("extract ZAP failed: %w", err)
+		}
+		// Rename extracted dir to "zap"
+		entries, _ := os.ReadDir(i.ToolsDir)
+		for _, e := range entries {
+			if e.IsDir() && strings.HasPrefix(e.Name(), "ZAP_") {
+				_ = os.Rename(filepath.Join(i.ToolsDir, e.Name()), zapPath)
+				break
+			}
+		}
+		// Make zap.sh executable
+		zapSH := filepath.Join(zapPath, "zap.sh")
+		if _, err := os.Stat(zapSH); err == nil {
+			_ = os.Chmod(zapSH, 0755)
+		}
+		// Create wrapper
+		wrapper := filepath.Join(i.ToolsDir, "zap")
+		wrapperContent := "#!/bin/sh\n\"" + zapSH + "\" \"$@\"\n"
+		return os.WriteFile(wrapper, []byte(wrapperContent), 0755)
+	case "darwin":
+		_, err := runCmd(context.Background(), "brew", "install", "--cask", "zap")
+		return err
+	case "windows":
+		return fmt.Errorf("ZAP on Windows: download from https://www.zaproxy.org/download/")
+	}
+	return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 }
 
 func (i *Installer) installSemgrep() error {
-	return fmt.Errorf("semgrep must be installed via pip: pip install semgrep")
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		cmds := []string{
+			"pip3 install semgrep",
+			"pip install semgrep",
+			"python3 -m pip install semgrep",
+			"python -m pip install semgrep",
+		}
+		var err error
+		for _, c := range cmds {
+			_, err = runCmd(context.Background(), "sh", "-c", c+" 2>/dev/null")
+			if err == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("semgrep install failed: %w. Try: pip3 install semgrep", err)
+	case "windows":
+		return fmt.Errorf("semgrep on Windows: python -m pip install semgrep")
+	}
+	return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 }
 
 func (i *Installer) installTrufflehog() error {
 	// Pre-built binary from GitHub releases: go install fails due to replace directives in trufflehog's go.mod
+	// Asset naming uses Go arch convention: amd64, arm64 (NOT x86_64)
 	arch := runtime.GOARCH
-	if arch == "amd64" {
-		arch = "x86_64"
-	}
 	osName := runtime.GOOS
 
 	// Fetch latest release info from GitHub API

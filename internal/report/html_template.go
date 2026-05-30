@@ -113,7 +113,7 @@ const htmlTemplate = `<!DOCTYPE html>
 <h3>1.3 Key Findings</h3>
 {{range .TopCritical}}
 <div class="finding">
-  <h3><span class="badge badge-{{lower .Severity}}">{{.Severity}}</span> {{.Title}}</h3>
+  <h3><span class="badge badge-{{severityClass .Severity}}">{{.Severity}}</span> {{.Title}}</h3>
   <p>{{.AffectedURL}}</p>
 </div>
 {{end}}
@@ -236,9 +236,9 @@ Low     │  MED   │  LOW   │  INFO
 <h2 id="s5">5. Detailed Findings</h2>
 {{range $i, $f := .VulnFindings}}
 <div class="finding">
-  <h3><span class="badge badge-{{lower $f.Severity}}">{{$f.Severity}}</span> Finding {{add $i 1}} — {{$f.Title}}</h3>
+  <h3><span class="badge badge-{{severityClass $f.Severity}}">{{$f.Severity}}</span> Finding {{add $i 1}} — {{$f.Title}}</h3>
   <table>
-    {{if $f.Severity}}<tr><td><strong>Severity</strong></td><td><span class="badge badge-{{lower $f.Severity}}">{{$f.Severity}}</span></td></tr>{{end}}
+    {{if $f.Severity}}<tr><td><strong>Severity</strong></td><td><span class="badge badge-{{severityClass $f.Severity}}">{{$f.Severity}}</span></td></tr>{{end}}
     {{if gt $f.CVSS 0.0}}<tr><td><strong>CVSS v3.1 Score</strong></td><td>{{printf "%.1f" $f.CVSS}}</td></tr>{{end}}
     {{if $f.CVSSVector}}<tr><td><strong>CVSS Vector</strong></td><td><code>{{$f.CVSSVector}}</code></td></tr>{{end}}
     {{if $f.CWE}}<tr><td><strong>CWE</strong></td><td>{{join $f.CWE ", "}}</td></tr>{{end}}

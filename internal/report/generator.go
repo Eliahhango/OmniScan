@@ -331,7 +331,11 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 		}
 		data.EngineStatus = append(data.EngineStatus, EngineEntry{Name: t, Status: status, Notes: notes})
 	}
-	// Add unavailable tools
+	// Add unavailable tools (only those not already active)
+	activeNames := make(map[string]bool)
+	for _, e := range data.EngineStatus {
+		activeNames[e.Name] = true
+	}
 	unavailable := map[string]string{
 		"zap":       "Install from https://www.zaproxy.org/download/",
 		"openvas":   "Requires manual setup",
@@ -342,7 +346,9 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 		"trufflehog":"Install: omniscan setup",
 	}
 	for name, note := range unavailable {
-		data.EngineStatus = append(data.EngineStatus, EngineEntry{Name: name, Status: "Not Available", Notes: note})
+		if !activeNames[name] {
+			data.EngineStatus = append(data.EngineStatus, EngineEntry{Name: name, Status: "Not Available", Notes: note})
+		}
 	}
 
 	// Extract infrastructure from info findings
@@ -506,6 +512,20 @@ func (g *Generator) GenerateHTML(data ReportData) (string, error) {
 		"lower":      strings.ToLower,
 		"join":       strings.Join,
 		"trimPrefix": strings.TrimPrefix,
+		"severityClass": func(s types.Severity) string {
+			switch s {
+			case types.SeverityCritical:
+				return "critical"
+			case types.SeverityHigh:
+				return "high"
+			case types.SeverityMedium:
+				return "medium"
+			case types.SeverityLow:
+				return "low"
+			default:
+				return "info"
+			}
+		},
 		"percent": func(count, total int) string {
 			if total == 0 {
 				return "0%"
@@ -1009,6 +1029,20 @@ func (g *Generator) GeneratePDF(data ReportData) (string, error) {
 		"lower":      strings.ToLower,
 		"join":       strings.Join,
 		"trimPrefix": strings.TrimPrefix,
+		"severityClass": func(s types.Severity) string {
+			switch s {
+			case types.SeverityCritical:
+				return "critical"
+			case types.SeverityHigh:
+				return "high"
+			case types.SeverityMedium:
+				return "medium"
+			case types.SeverityLow:
+				return "low"
+			default:
+				return "info"
+			}
+		},
 		"percent": func(count, total int) string {
 			if total == 0 {
 				return "0%"

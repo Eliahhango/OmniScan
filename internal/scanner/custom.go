@@ -1264,8 +1264,8 @@ func checkJSSecrets(target string) ([]types.Finding, error) {
 				}
 				findings = append(findings, types.Finding{
 					ID:          fmt.Sprintf("js-secret-%x", sha256.Sum256([]byte(m)))[:48],
-					Title:       fmt.Sprintf("%s Exposed", p.name),
-					Description: fmt.Sprintf("%s found in %s", p.name, jsURL),
+					Title:       fmt.Sprintf("%s Exposed (%s)", p.name, redacted),
+					Description: fmt.Sprintf("%s found in %s: `%s`", p.name, jsURL, m[:min(len(m), 60)]),
 					Severity:    p.severity,
 					AffectedURL: jsURL,
 					Proof:       redacted,

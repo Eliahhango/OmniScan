@@ -27,7 +27,7 @@ sudo apt install -y -qq nmap nikto python3-pip git 2>/dev/null || echo -e "${RED
 
 # --- pip tools ---
 echo -e "${CYAN}[3/6] Installing semgrep...${NC}"
-pip3 install semgrep -q 2>/dev/null || echo -e "${RED}Warning: semgrep install failed (pip3 may need manual setup)${NC}"
+pip3 install semgrep -q --break-system-packages 2>/dev/null || pip3 install semgrep -q 2>/dev/null || echo -e "${RED}Warning: semgrep install failed (try: pip3 install semgrep)${NC}"
 
 # --- Go tools ---
 echo -e "${CYAN}[4/6] Installing security tools (nuclei, subfinder, httpx, katana, ffuf, trufflehog, gau, gospider, gobuster)...${NC}"

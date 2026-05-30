@@ -174,6 +174,20 @@ func runScan(configPath string) {
 
 	orch := scanner.NewOrchestrator(orchCfg, store)
 
+	// Print progress in CLI mode (emitProgress is a no-op without this)
+	if !jsonOutput {
+		stageNum := 0
+		orch.OnStage = func(stage types.ScanStage, tool string, progress float64) {
+			if tool != "" {
+				stageName := types.StageNames[stage]
+				fmt.Printf("  [%d/7] %s: %s\n", stageNum+1, stageName, tool)
+			} else {
+				stageNum = int(stage)
+				fmt.Printf("  [%d/7] %s...\n", stageNum+1, types.StageNames[stage])
+			}
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 

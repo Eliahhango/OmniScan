@@ -2,7 +2,10 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -18,6 +21,9 @@ import (
 	"github.com/Eliahhango/OmniScan/internal/webhook"
 	"github.com/Eliahhango/OmniScan/pkg/types"
 )
+
+// Version is set at build time via ldflags or defaults to dev
+var Version = "dev"
 
 type Orchestrator struct {
 	cfg        *OrchestratorConfig
@@ -586,8 +592,113 @@ func (i *Installer) installSemgrep() error {
 }
 
 func (i *Installer) installTrufflehog() error {
-	_, err := runCmd(context.Background(), "go", "install", "github.com/trufflesecurity/trufflehog/v3@latest")
+	// Pre-built binary from GitHub releases: go install fails due to replace directives in trufflehog's go.mod
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x86_64"
+	}
+	osName := runtime.GOOS
+
+	// Fetch latest release info from GitHub API
+	resp, err := http.Get("https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest")
+	if err != nil {
+		return fmt.Errorf("fetch trufflehog release: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var release struct {
+		Assets []struct {
+			BrowserDownloadURL string `json:"browser_download_url"`
+			Name               string `json:"name"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return fmt.Errorf("decode trufflehog release: %w", err)
+	}
+
+	// Find asset matching OS/ARCH, e.g. trufflehog_3.95.3_linux_amd64.tar.gz
+	suffix := fmt.Sprintf("%s_%s.tar.gz", osName, arch)
+	var downloadURL string
+	for _, a := range release.Assets {
+		if strings.Contains(a.Name, suffix) {
+			downloadURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if downloadURL == "" {
+		return fmt.Errorf("no trufflehog binary found for %s/%s", osName, arch)
+	}
+
+	// Download the archive
+	binResp, err := http.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("download trufflehog: %w", err)
+	}
+	defer binResp.Body.Close()
+
+	tmpDir, err := os.MkdirTemp("", "trufflehog")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tmpTar := filepath.Join(tmpDir, "th.tar.gz")
+	f, err := os.Create(tmpTar)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, binResp.Body); err != nil {
+		f.Close()
+		return err
+	}
+	f.Close()
+
+	// Extract
+	if _, err := runCmd(context.Background(), "tar", "xzf", tmpTar, "-C", tmpDir); err != nil {
+		return fmt.Errorf("extract trufflehog: %w", err)
+	}
+
+	// Install binary
+	binaryPath := filepath.Join(tmpDir, "trufflehog")
+	installPath := filepath.Join(i.ToolsDir, "trufflehog")
+	if runtime.GOOS == "windows" {
+		binaryPath += ".exe"
+		installPath += ".exe"
+	}
+	if err := os.MkdirAll(i.ToolsDir, 0755); err != nil {
+		return err
+	}
+	input, err := os.ReadFile(binaryPath)
+	if err != nil {
+		return fmt.Errorf("read extracted trufflehog: %w", err)
+	}
+	if err := os.WriteFile(installPath, input, 0755); err != nil {
+		return fmt.Errorf("write trufflehog: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateSelf rebuilds OmniScan from source via go install
+func UpdateSelf() error {
+	_, err := runCmd(context.Background(), "go", "install", "github.com/Eliahhango/OmniScan/cmd/omniscan@latest")
 	return err
+}
+
+// UpdateAll updates the binary and all integrated tools
+func (i *Installer) UpdateAll() map[string]InstallResult {
+	// Update self first
+	if err := UpdateSelf(); err != nil {
+		// If self-update fails, still try to update tools
+		if i.Progress != nil {
+			i.Progress <- InstallResult{Name: "omniscan", Status: "failed", Error: err.Error()}
+		}
+	} else {
+		if i.Progress != nil {
+			i.Progress <- InstallResult{Name: "omniscan", Status: "updated"}
+		}
+	}
+	return i.InstallAll()
 }
 
 func (i *Installer) installGau() error {

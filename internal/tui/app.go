@@ -393,7 +393,7 @@ func (a *App) View() string {
 		return "Loading..."
 	}
 
-	title := DefaultStyles.Title.Render(fmt.Sprintf("OmniScan v1.0  |  Target: %s  |  Status: %s", a.target, a.status))
+	title := DefaultStyles.Title.Render(fmt.Sprintf("OmniScan %s  |  Target: %s  |  Status: %s", scanner.Version, a.target, a.status))
 	credit := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("EliTechWiz — github.com/Eliahhango")
 	tabBar := a.renderTabs()
 	content := a.renderContent()

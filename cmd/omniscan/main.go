@@ -48,6 +48,8 @@ func main() {
 		fmt.Println("  omniscan diff <id1> <id2>         Compare two scans")
 		fmt.Println("  omniscan daemon [--listen :8080]  Start daemon server")
 		fmt.Println("  omniscan setup                    Install all 13 tools")
+		fmt.Println("  omniscan update                   Update OmniScan + all tools")
+		fmt.Println("  omniscan version                  Show version info")
 		fmt.Println("  omniscan bounty <target>          Bug bounty mode")
 		fmt.Println()
 		fmt.Println("Flags:")
@@ -64,6 +66,8 @@ func main() {
 		fmt.Println("  omniscan scan --json --exit-on-severity=high -t example.com")
 		fmt.Println("  omniscan diff 1 2")
 		fmt.Println("  omniscan daemon --listen :9090")
+		fmt.Println("  omniscan update")
+		fmt.Println("  omniscan version")
 		fmt.Println("  omniscan bounty -t example.com -program hackerone")
 		fmt.Println("  omniscan setup")
 		return
@@ -83,6 +87,10 @@ func main() {
 		runDaemon(configPath)
 	case "setup":
 		runSetup()
+	case "update":
+		runUpdate()
+	case "version":
+		fmt.Printf("OmniScan %s\n", scanner.Version)
 	case "bounty":
 		runBounty(configPath)
 	default:
@@ -513,6 +521,40 @@ func runSetup() {
 		}
 	}
 	fmt.Printf("\nInstalled: %d, Failed: %d (manual install required)\n", success, failed)
+}
+
+func runUpdate() {
+	fmt.Println("Updating OmniScan and all integrated tools...")
+
+	progress := make(chan scanner.InstallResult, 14)
+	installer := scanner.NewInstaller("tools")
+	installer.Progress = progress
+
+	go func() {
+		for r := range progress {
+			if r.Status == "updated" || r.Status == "installed" {
+				fmt.Printf("  [+] %s - %s\n", r.Name, r.Status)
+			} else if r.Status == "failed" && r.Name == "omniscan" {
+				fmt.Printf("  [!] %s - self-update failed: %s\n", r.Name, r.Error)
+			} else if r.Status == "failed" {
+				fmt.Printf("  [-] %s - %s\n", r.Name, r.Error)
+			}
+		}
+	}()
+
+	results := installer.UpdateAll()
+	close(progress)
+
+	success, failed := 0, 0
+	for _, r := range results {
+		if r.Status == "updated" || r.Status == "installed" {
+			success++
+		} else {
+			failed++
+		}
+	}
+	fmt.Printf("\nTools updated: %d, Failed: %d\n", success, failed)
+	fmt.Println("\nOmniScan binary updated in background. Restart omniscan to use the new version.")
 }
 
 func runBounty(configPath string) {

@@ -14,8 +14,9 @@ OmniScan integrates 13 security scanning tools into a single real-time TUI with 
 
 ## Features
 
-- **Unified Coverage** — Run nuclei, nmap, nikto, ZAP, ffuf, subfinder, httpx, katana, gospider, gau, semgrep, trufflehog, and OpenVAS from one interface
-- **Interactive CLI** — RED_HAWK-inspired numbered menu with category-based scan selection
+- **Unified Coverage** — Run nuclei, nmap, nikto, ZAP, ffuf, subfinder, httpx, katana, gospider, gau, semgrep, trufflehog, and OpenVAS from one interface (via full scan mode)
+- **Interactive CLI** — Numbered menu with 12 scan categories (custom scanners only) and full-scan mode (all tools + external scanners)
+- **40+ Built-in Scanners** — Subdomain enumeration, SQLi, XSS, SSRF, path traversal, XXE, CORS, CSRF, JWT, rate limiting, command injection, deserialization, and more
 - **Real-time TUI** — Bubble Tea-powered terminal UI with live scan progress, recon panel, and report preview
 - **Dedup Engine** — Smart deduplication by URL+CVE, URL+CWE+param, and CVE fingerprints
 - **CVE→CWE→OWASP Mapping** — Automatic normalization and mapping to OWASP 2025 categories
@@ -46,7 +47,7 @@ curl -sL https://raw.githubusercontent.com/Eliahhango/OmniScan/master/install.sh
 ## Quick Start
 
 ```bash
-# Launch the interactive CLI (numbered menu — pick scans by category)
+# Launch the interactive CLI (numbered menu — pick scans by category or run all)
 omniscan
 
 # Show usage / help menu
@@ -55,7 +56,14 @@ omniscan help
 # Launch the interactive TUI (Bubble Tea GUI)
 omniscan tui
 
-# Run a full scan from the CLI
+# Interactive sub-commands (also available inside the interactive menu):
+#   [0]-[11]  Run specific scan categories (custom scanners only)
+#   [12]      Pick individual scanners by number
+#   [A]       Run everything (including external tools: nuclei, nmap, zap, etc.)
+#   [B]       Enter a new target
+#   [Q]       Quit
+
+# Run a full scan from the CLI (bypasses interactive menu)
 omniscan scan -t example.com
 
 # Resume a previous scan

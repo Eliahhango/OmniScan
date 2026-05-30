@@ -26,7 +26,7 @@ type ScanCategory struct {
 var scanCategories = []ScanCategory{
 	{
 		Number: "0", Name: "Basic Recon",
-		Desc:    "DNS records, WHOIS, Geo-IP, security headers, CMS detection, robots.txt",
+		Desc:    "DNS records, WHOIS, Geo-IP, security headers, CMS detection, social links",
 		Scanners: []string{"dns-records", "whois-lookup", "geo-ip-lookup", "security-headers", "cms-detection", "error-disclosure", "social-links"},
 	},
 	{
@@ -56,28 +56,28 @@ var scanCategories = []ScanCategory{
 	},
 	{
 		Number: "6", Name: "Port Scanning",
-		Desc:    "Nmap port scan, service detection",
+		Desc:    "Quick TCP port scan on common ports",
 		Scanners: []string{"port-scan"},
 	},
 	{
 		Number: "7", Name: "Secrets & SAST",
-		Desc:    "TruffleHog, Semgrep, JS secrets, Error Disclosure, IDOR",
+		Desc:    "JS secrets, error disclosure, IDOR detection, race condition",
 		Scanners: []string{"js-secrets", "error-disclosure", "idor-detection", "race-condition"},
 	},
 	{
 		Number: "8", Name: "Fuzzing & Bruteforce",
-		Desc:    "FFUF, GoBuster, rate limiting tests",
+		Desc:    "Rate limiting tests, parameter discovery",
 		Scanners: []string{"rate-limiting"},
 	},
 	{
-		Number: "9", Name: "External Scanners",
-		Desc:    "Nuclei, ZAP, Nikto, OpenVAS (requires external tools installed)",
+		Number: "9", Name: "External Scanners (full scan only)",
+		Desc:    "Nuclei, ZAP, Nikto, OpenVAS — run via [A] Scan Everything",
 		Scanners: []string{},
 	},
 	{
 		Number: "10", Name: "CMS & Technology Detection",
-		Desc:    "CMS fingerprint, tech fingerprint, GraphQL, Account Takeover",
-		Scanners: []string{"tech-fingerprint", "graphql-introspection", "account-takeover", "s3-bucket-enum"},
+		Desc:    "CMS fingerprint, tech fingerprint, GraphQL, Account Takeover, S3",
+		Scanners: []string{"tech-fingerprint", "cms-detection", "graphql-introspection", "account-takeover", "s3-bucket-enum"},
 	},
 	{
 		Number: "11", Name: "Threat Intelligence",
@@ -191,9 +191,11 @@ func printScanList(target, protocol string) {
 	}
 
 	fmt.Println("  [12] Custom — Pick individual scanners by number")
-	fmt.Println("  [A]  Scan Everything — Full comprehensive scan")
+	fmt.Println("  [A]  Scan Everything — Full comprehensive scan (includes external tools)")
 	fmt.Println("  [B]  Back — Enter a new target")
 	fmt.Println("  [Q]  Quit")
+	fmt.Println("  ────────────────────────────────────────────────────────────────────────────")
+	fmt.Println("  Note: External tools (Nuclei, Nmap, ZAP, Nikto, etc.) only run via [A].")
 }
 
 func findCategory(num string) *ScanCategory {

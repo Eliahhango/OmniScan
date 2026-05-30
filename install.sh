@@ -63,7 +63,7 @@ fi
 # ────────────────────────────────────────── Step 2: apt packages ──────────────────────────────────────────
 echo -e "${CYAN}[$((++STEP))/6]${NC} Installing system packages (nmap, nikto, python3, pipx)..."
 sudo apt update -qq 2>/dev/null || true
-sudo apt install -y nmap nikto python3-pip git pipx 2>&1 | tail -n 1
+sudo apt install -y nmap nikto openvas python3-pip git pipx 2>&1 | tail -n 1
 
 # ───────────────────────────────────────────── Step 3: semgrep ─────────────────────────────────────────────
 echo -e "${CYAN}[$((++STEP))/6]${NC} Installing semgrep via pipx..."

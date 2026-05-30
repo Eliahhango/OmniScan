@@ -1,6 +1,5 @@
 #!/bin/bash
 # OmniScan - One-command installer (Ubuntu/Debian)
-set -e
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 
@@ -23,39 +22,39 @@ fi
 
 # --- System packages ---
 echo -e "${CYAN}[2/6] Installing system packages (nmap, nikto, python3)...${NC}"
-sudo apt update -qq
-sudo apt install -y -qq nmap nikto python3-pip git
+sudo apt update -qq 2>/dev/null || true
+sudo apt install -y -qq nmap nikto python3-pip git 2>/dev/null || echo -e "${RED}Warning: some apt packages failed (nmap/nikto may need manual install)${NC}"
 
 # --- pip tools ---
 echo -e "${CYAN}[3/6] Installing semgrep...${NC}"
-pip3 install semgrep -q
+pip3 install semgrep -q 2>/dev/null || echo -e "${RED}Warning: semgrep install failed (pip3 may need manual setup)${NC}"
 
 # --- Go tools ---
 echo -e "${CYAN}[4/6] Installing security tools (nuclei, subfinder, httpx, katana, ffuf, trufflehog, gau, gospider, gobuster)...${NC}"
-go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-go install github.com/projectdiscovery/httpx/cmd/httpx@latest
-go install github.com/projectdiscovery/katana/cmd/katana@latest
-go install github.com/ffuf/ffuf/v2@latest
-go install github.com/trufflesecurity/trufflehog/v3@latest
-go install github.com/lc/gau/v2/cmd/gau@latest
-go install github.com/jaeles-project/gospider@latest
-go install github.com/OJ/gobuster/v3@latest
+go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>/dev/null || echo -e "${RED}Warning: nuclei install failed${NC}"
+go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest 2>/dev/null || echo -e "${RED}Warning: subfinder install failed${NC}"
+go install github.com/projectdiscovery/httpx/cmd/httpx@latest 2>/dev/null || echo -e "${RED}Warning: httpx install failed${NC}"
+go install github.com/projectdiscovery/katana/cmd/katana@latest 2>/dev/null || echo -e "${RED}Warning: katana install failed${NC}"
+go install github.com/ffuf/ffuf/v2@latest 2>/dev/null || echo -e "${RED}Warning: ffuf install failed${NC}"
+go install github.com/trufflesecurity/trufflehog/v3@latest 2>/dev/null || echo -e "${RED}Warning: trufflehog install failed${NC}"
+go install github.com/lc/gau/v2/cmd/gau@latest 2>/dev/null || echo -e "${RED}Warning: gau install failed${NC}"
+go install github.com/jaeles-project/gospider@latest 2>/dev/null || echo -e "${RED}Warning: gospider install failed${NC}"
+go install github.com/OJ/gobuster/v3@latest 2>/dev/null || echo -e "${RED}Warning: gobuster install failed${NC}"
 
 # --- Build OmniScan ---
 echo -e "${CYAN}[5/6] Building OmniScan...${NC}"
 if [ ! -d "$HOME/OmniScan" ]; then
-    git clone https://github.com/Eliahhango/OmniScan.git $HOME/OmniScan
+    git clone https://github.com/Eliahhango/OmniScan.git "$HOME/OmniScan" 2>/dev/null
 fi
-cd $HOME/OmniScan && git pull
-go build -o $HOME/go/bin/omniscan ./cmd/omniscan/
+cd "$HOME/OmniScan" && git pull 2>/dev/null
+go build -o "$HOME/go/bin/omniscan" ./cmd/omniscan/ 2>/dev/null || { echo -e "${RED}OmniScan build failed${NC}"; exit 1; }
 
 # --- Verify ---
 echo -e "${CYAN}[6/6] Verifying installation...${NC}"
 TOOLS="omniscan nuclei subfinder httpx katana ffuf nmap nikto semgrep trufflehog gau gospider gobuster"
 MISSING=0
 for tool in $TOOLS; do
-    if command -v $tool &> /dev/null; then
+    if command -v "$tool" &> /dev/null; then
         echo -e "  ${GREEN}✓${NC} $tool"
     else
         echo -e "  ${RED}✗${NC} $tool (not found — may need manual install)"

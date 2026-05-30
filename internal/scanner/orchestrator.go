@@ -607,6 +607,8 @@ func (i *Installer) installNmap() error {
 			"dnf install -y nmap 2>/dev/null",
 			"yum install -y nmap 2>/dev/null",
 			"apk add nmap 2>/dev/null",
+			"pacman -S --noconfirm nmap 2>/dev/null",
+			"zypper -n install nmap 2>/dev/null",
 		}
 		var err error
 		for _, c := range cmds {
@@ -615,7 +617,12 @@ func (i *Installer) installNmap() error {
 				return nil
 			}
 		}
-		return fmt.Errorf("nmap install failed. Try: apt-get install nmap")
+		// Fallback: download static binary
+		binPath := filepath.Join(i.ToolsDir, "nmap")
+		if err := downloadFile("https://github.com/andrew-d/static-binaries/raw/master/binaries/linux/x86_64/nmap", binPath); err != nil {
+			return fmt.Errorf("nmap install failed (package managers and static binary). Try: apt-get install nmap")
+		}
+		return os.Chmod(binPath, 0755)
 	case "darwin":
 		_, err := runCmd(context.Background(), "brew", "install", "nmap")
 		return err
@@ -761,13 +768,21 @@ func (i *Installer) installZap() error {
 func (i *Installer) installSemgrep() error {
 	switch runtime.GOOS {
 	case "linux":
+		// Try package managers to bootstrap pip
 		_, _ = runCmd(context.Background(), "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-pip python3-venv 2>/dev/null")
 		_, _ = runCmd(context.Background(), "sh", "-c", "dnf install -y python3-pip 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "yum install -y python3-pip 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "apk add py3-pip 2>/dev/null")
+		_, _ = runCmd(context.Background(), "sh", "-c", "pacman -S --noconfirm python-pip 2>/dev/null")
+		// Try ensurepip if python3 exists but pip doesn't
+		_, _ = runCmd(context.Background(), "sh", "-c", "python3 -m ensurepip --upgrade 2>/dev/null")
 		cmds := []string{
 			"pip3 install semgrep",
 			"pip install semgrep",
 			"python3 -m pip install semgrep",
 			"python -m pip install semgrep",
+			"pip3 install --user semgrep",
+			"python3 -m pip install --user semgrep",
 		}
 		var err error
 		for _, c := range cmds {
@@ -776,7 +791,7 @@ func (i *Installer) installSemgrep() error {
 				return nil
 			}
 		}
-		return fmt.Errorf("semgrep install failed. Try: apt-get install python3-pip && pip3 install semgrep")
+		return fmt.Errorf("semgrep install failed. Try manually: pip3 install semgrep")
 	case "darwin":
 		cmds := []string{
 			"pip3 install semgrep",
@@ -792,7 +807,7 @@ func (i *Installer) installSemgrep() error {
 				return nil
 			}
 		}
-		return fmt.Errorf("semgrep install failed. Try: pip3 install semgrep")
+		return fmt.Errorf("semgrep install failed. Try: brew install semgrep")
 	case "windows":
 		return fmt.Errorf("semgrep on Windows: python -m pip install semgrep")
 	}

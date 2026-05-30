@@ -567,55 +567,16 @@ func runUpdate() {
 	}
 }
 
-func shell(cmd string) {
-	_ = exec.CommandContext(context.Background(), "sh", "-c", cmd).Run()
-}
-
 func runReinstall() {
-	fmt.Printf("OmniScan %s - Full reinstall\n", scanner.Version)
-
-	if os.Getenv("OMNISCAN_UPDATED") == "" {
-		// System packages (only on first pass before re-exec)
-		fmt.Println("  [1/4] Installing system dependencies...")
-		shell("DEBIAN_FRONTEND=noninteractive apt-get install -y nmap nikto openvas python3-pip git pipx 2>&1 | tail -5")
-		shell("pipx install semgrep 2>&1 | tail -3")
-	} else {
-		fmt.Println("  [1/4] System dependencies already installed.")
-	}
-
-	// Same progress/output flow as runUpdate
-	progress := make(chan scanner.InstallResult, 14)
-	installer := scanner.NewInstaller("tools")
-	installer.Progress = progress
-
-	go func() {
-		for r := range progress {
-			if r.Status == "updated" || r.Status == "installed" {
-				fmt.Printf("  [+] %s - %s\n", r.Name, r.Status)
-			} else if r.Status == "failed" && r.Name == "omniscan" {
-				fmt.Printf("  [!] %s - self-update failed: %s\n", r.Name, r.Error)
-			} else if r.Status == "failed" {
-				fmt.Printf("  [-] %s - %s\n", r.Name, r.Error)
-			}
-		}
-	}()
-
-	results := installer.UpdateAll()
-	close(progress)
-
-	success, failed := 0, 0
-	for _, r := range results {
-		if r.Status == "updated" || r.Status == "installed" {
-			success++
-		} else {
-			failed++
-		}
-	}
-	fmt.Printf("\nTools: %d OK, %d Failed\n", success, failed)
-	if r, ok := results["omniscan"]; ok && r.Status == "updated" {
-		fmt.Println("\nOmniScan binary updated. Restart to use the new version.")
-	} else if r, ok := results["omniscan"]; ok && r.Status == "installed" {
-		fmt.Println("\nOmniScan installed.")
+	fmt.Println("Reinstalling OmniScan from source...")
+	cmd := exec.CommandContext(context.Background(), "sh", "-c",
+		"curl -sL https://raw.githubusercontent.com/Eliahhango/OmniScan/master/install.sh | sudo bash")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("reinstall failed: %v\n", err)
+		os.Exit(1)
 	}
 }
 

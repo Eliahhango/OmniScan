@@ -130,6 +130,9 @@ func (g *Generator) BuildReportData(target string, findings []types.Finding, dur
 }
 
 func (g *Generator) GenerateHTML(data ReportData) (string, error) {
+	if err := os.MkdirAll(g.OutputDir, 0755); err != nil {
+		return "", err
+	}
 	funcMap := template.FuncMap{
 		"percent": func(count, total int) string {
 			if total == 0 {
@@ -163,6 +166,9 @@ func (g *Generator) GenerateHTML(data ReportData) (string, error) {
 }
 
 func (g *Generator) GenerateJSON(data ReportData) (string, error) {
+	if err := os.MkdirAll(g.OutputDir, 0755); err != nil {
+		return "", err
+	}
 	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.json", time.Now().Format("20060102-150405")))
 	f, err := os.Create(path)
 	if err != nil {
@@ -175,6 +181,9 @@ func (g *Generator) GenerateJSON(data ReportData) (string, error) {
 }
 
 func (g *Generator) GenerateMarkdown(data ReportData) (string, error) {
+	if err := os.MkdirAll(g.OutputDir, 0755); err != nil {
+		return "", err
+	}
 	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.md", time.Now().Format("20060102-150405")))
 	f, err := os.Create(path)
 	if err != nil {
@@ -213,6 +222,9 @@ func (g *Generator) GenerateMarkdown(data ReportData) (string, error) {
 }
 
 func (g *Generator) GeneratePDF(data ReportData) (string, error) {
+	if err := os.MkdirAll(g.OutputDir, 0755); err != nil {
+		return "", err
+	}
 	funcMap := template.FuncMap{
 		"percent": func(count, total int) string {
 			if total == 0 {
@@ -253,6 +265,9 @@ func (g *Generator) GeneratePDF(data ReportData) (string, error) {
 }
 
 func (g *Generator) GenerateCSV(data ReportData) (string, error) {
+	if err := os.MkdirAll(g.OutputDir, 0755); err != nil {
+		return "", err
+	}
 	path := filepath.Join(g.OutputDir, fmt.Sprintf("report-%s.csv", time.Now().Format("20060102-150405")))
 	f, err := os.Create(path)
 	if err != nil {

@@ -62,6 +62,10 @@ while kill -0 "$pid" 2>/dev/null; do
 done
 wait "$pid"; rc=$?
 if [ $rc -eq 0 ]; then
+    # Symlink so it's in PATH for verification (pipx installs to ~/.local/bin)
+    PIPX_BIN="$(pipx environment 2>/dev/null | grep 'PIPX_BIN_DIR' | cut -d= -f2-)"
+    [ -n "$PIPX_BIN" ] && PIPX_BIN="${PIPX_BIN//\"/}" || PIPX_BIN="$HOME/.local/bin"
+    [ -f "$PIPX_BIN/semgrep" ] && sudo ln -sf "$PIPX_BIN/semgrep" /usr/local/bin/semgrep 2>/dev/null
     printf "\r  \033[K${GREEN}OK${NC}   semgrep  %s  elapsed:%s\n" "$(fmt_time $((SECONDS - sem_start)))" "$(fmt_time $((SECONDS - GLOBAL_START)))"
 else
     printf "\r  \033[K${YELLOW}WARN${NC}  semgrep  %s  (pipx install semgrep manually)\n" "$(fmt_time $((SECONDS - sem_start)))"
